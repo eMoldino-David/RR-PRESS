@@ -1045,118 +1045,88 @@ def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM',
                            show_approved_ct=False):
     """
     Industry-standard stroke rate chart for press / stamping tools.
-
-    Aggregates actual stroke counts into time buckets and displays the
-    resulting rate — identical to Vorne XL / Schuler / Ignition SCADA style.
-
-    SPM → 1-minute buckets  (count per minute  = SPM for that minute)
-    SPH → 1-hour   buckets  (count per hour    = SPH for that hour)
-
-    Stacked bars show Normal Strokes (blue) vs Stopped Strokes (red).
-    A horizontal target line is drawn at the approved / mode rate.
+    Each run is bucketed independently so inter-run gaps are not filled
+    with phantom zero-rate buckets.
     """
     if df.empty:
         st.info("No stroke data to display for this period.")
         return
 
-    df = df.copy()
+    freq       = 'min' if stroke_unit == 'SPM' else 'h'
+    bucket_lbl = 'Minute' if stroke_unit == 'SPM' else 'Hour'
+    rate_lbl   = f'Strokes Per {"Minute" if stroke_unit == "SPM" else "Hour"} ({stroke_unit})'
+    title      = f'Run Rate – Stroke Chart ({stroke_unit})'
 
-    # --- time bucket ---
-    if stroke_unit == 'SPH':
-        freq       = 'h'
-        bucket_lbl = 'Hour'
-        rate_lbl   = 'Strokes Per Hour (SPH)'
-        title      = 'Run Rate – Stroke Chart (SPH)'
-    else:
-        freq       = 'min'
-        bucket_lbl = 'Minute'
-        rate_lbl   = 'Strokes Per Minute (SPM)'
-        title      = 'Run Rate – Stroke Chart (SPM)'
+    # Build per-run bucket counts then concatenate with NaN spacers
+    normal_rows, stopped_rows = [], []
+    run_col = 'run_id' if 'run_id' in df.columns else None
 
-    df['bucket'] = df['shot_time'].dt.floor(freq)
+    groups = df.groupby(run_col) if run_col else [('all', df)]
+    for _, run_df in groups:
+        run_df = run_df.sort_values('shot_time')
+        n = (run_df[run_df['stop_flag'] == 0]
+             .set_index('shot_time').resample(freq).size().rename('normal'))
+        s = (run_df[run_df['stop_flag'] == 1]
+             .set_index('shot_time').resample(freq).size().rename('stopped'))
+        agg = pd.DataFrame({'normal': n, 'stopped': s}).fillna(0).astype(int).reset_index()
+        normal_rows.append(agg[['shot_time', 'normal']])
+        stopped_rows.append(agg[['shot_time', 'stopped']])
+        # NaN spacer — breaks the bar trace between runs
+        spacer = pd.DataFrame({'shot_time': [pd.NaT], 'normal': [None], 'stopped': [None]})
+        normal_rows.append(spacer[['shot_time', 'normal']])
+        stopped_rows.append(spacer[['shot_time', 'stopped']])
 
-    # Count normal vs stopped strokes per bucket
-    normal_counts  = (df[df['stop_flag'] == 0]
-                      .groupby('bucket').size()
-                      .rename('normal'))
-    stopped_counts = (df[df['stop_flag'] == 1]
-                      .groupby('bucket').size()
-                      .rename('stopped'))
-
-    agg = (pd.DataFrame({'normal': normal_counts, 'stopped': stopped_counts})
-             .fillna(0)
-             .astype(int)
-             .reset_index())
-    agg['total'] = agg['normal'] + agg['stopped']
-
-    if agg.empty:
-        st.info("No data to aggregate.")
-        return
+    agg_n = pd.concat(normal_rows,  ignore_index=True)
+    agg_s = pd.concat(stopped_rows, ignore_index=True)
 
     fig = go.Figure()
-
     fig.add_trace(go.Bar(
-        x=agg['bucket'], y=agg['normal'],
+        x=agg_n['shot_time'], y=agg_n['normal'],
         name='Normal Strokes', marker_color='#3498DB',
         hovertemplate='%{x}<br>Normal: %{y}<extra></extra>'
     ))
     fig.add_trace(go.Bar(
-        x=agg['bucket'], y=agg['stopped'],
+        x=agg_s['shot_time'], y=agg_s['stopped'],
         name='Stopped Strokes', marker_color=PASTEL_COLORS['red'],
         hovertemplate='%{x}<br>Stopped: %{y}<extra></extra>'
     ))
 
-    # --- target / approved rate line ---
     if show_approved_ct and 'approved_ct' in df.columns:
         valid_app = df['approved_ct'].dropna()
         if not valid_app.empty:
-            app_ct  = float(valid_app.mode().iloc[0]
-                            if not valid_app.mode().empty else valid_app.mean())
+            app_ct   = float(valid_app.mode().iloc[0] if not valid_app.mode().empty else valid_app.mean())
             app_rate = ct_to_stroke_rate(app_ct, stroke_unit)
             if app_rate and not np.isnan(app_rate):
-                fig.add_hline(
-                    y=app_rate,
-                    line_dash='dash', line_color='#00FF00', line_width=2,
-                    annotation_text=f'Approved {stroke_unit}: {app_rate:.0f}',
-                    annotation_position='top right',
-                    annotation_font_color='#00FF00'
-                )
+                fig.add_hline(y=app_rate, line_dash='dash', line_color='#00FF00', line_width=2,
+                              annotation_text=f'Approved {stroke_unit}: {app_rate:.0f}',
+                              annotation_position='top right',
+                              annotation_font_color='#00FF00')
 
-    # --- mode rate reference line ---
     if isinstance(mode_ct, (int, float)) and mode_ct > 0:
         mode_rate = ct_to_stroke_rate(mode_ct, stroke_unit)
         if mode_rate and not np.isnan(mode_rate):
-            fig.add_hline(
-                y=mode_rate,
-                line_dash='dot', line_color='#AAAAAA', line_width=1.5,
-                annotation_text=f'Mode {stroke_unit}: {mode_rate:.0f}',
-                annotation_position='bottom right',
-                annotation_font_color='#AAAAAA'
-            )
+            fig.add_hline(y=mode_rate, line_dash='dot', line_color='#AAAAAA', line_width=1.5,
+                          annotation_text=f'Mode {stroke_unit}: {mode_rate:.0f}',
+                          annotation_position='bottom right',
+                          annotation_font_color='#AAAAAA')
 
-    # --- run boundaries ---
-    if 'run_id' in df.columns:
-        run_starts = df.groupby('run_id')['shot_time'].min().sort_values()
+    if run_col:
+        run_starts = df.groupby(run_col)['shot_time'].min().sort_values()
         for start_time in run_starts.iloc[1:]:
-            fig.add_vline(
-                x=start_time, line_width=2,
-                line_dash='dash', line_color='purple'
-            )
+            fig.add_vline(x=start_time, line_width=2, line_dash='dash', line_color='purple')
 
-    # y-axis cap: 120% of max total, minimum sensible floor
-    y_max = agg['total'].max() if not agg.empty else 100
+    y_max = max(
+        agg_n['normal'].dropna().max() if not agg_n['normal'].dropna().empty else 0,
+        agg_s['stopped'].dropna().max() if not agg_s['stopped'].dropna().empty else 0
+    )
     fig.update_layout(
-        barmode='stack',
-        title=title,
-        xaxis_title=bucket_lbl,
-        yaxis_title=rate_lbl,
-        yaxis=dict(range=[0, y_max * 1.2]),
+        barmode='stack', title=title,
+        xaxis_title=bucket_lbl, yaxis_title=rate_lbl,
+        yaxis=dict(range=[0, (y_max or 1) * 1.2]),
         bargap=0.1,
-        legend=dict(orientation='h', yanchor='bottom', y=1.02,
-                    xanchor='right', x=1),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
         xaxis=dict(showgrid=True)
     )
-
     st.plotly_chart(fig, width='stretch')
 
 
@@ -1168,11 +1138,12 @@ def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM',
 def plot_cumulative_strokes(df, stroke_unit='SPM'):
     """
     Chart 3 — Cumulative Strokes vs Ideal Production Line.
+    Inter-run gaps are excluded from the ideal-rate projection so the gap
+    only represents actual downtime within runs, not scheduled breaks.
     """
     if df.empty:
         return
     df = df.copy().sort_values('shot_time').reset_index(drop=True)
-    df['cumulative'] = np.arange(1, len(df) + 1)
 
     normal = df[df['stop_flag'] == 0]
     if normal.empty:
@@ -1182,37 +1153,48 @@ def plot_cumulative_strokes(df, stroke_unit='SPM'):
     if mode_ct_val <= 0:
         return
 
-    t0 = df['shot_time'].iloc[0]
-    elapsed_sec = (df['shot_time'] - t0).dt.total_seconds().values
-    df['ideal'] = elapsed_sec / mode_ct_val
-
     rate_label = f"{ct_to_stroke_rate(mode_ct_val, stroke_unit):.1f} {stroke_unit}"
 
-    # Use .values throughout to avoid index alignment issues
-    times     = df['shot_time'].values
-    cumul     = df['cumulative'].values
-    ideal     = df['ideal'].values
+    # Ideal = cumulative production time / mode_ct  (excludes inter-run gaps)
+    # adj_ct_sec already has gap time for stop shots; use ACTUAL CT for production seconds
+    df['prod_elapsed'] = df['ACTUAL CT'].cumsum()
+    df['ideal'] = df['prod_elapsed'] / mode_ct_val
+    df['cumulative'] = np.arange(1, len(df) + 1)
+
+    run_col = 'run_id' if 'run_id' in df.columns else None
+    times_all, cumul_all, ideal_all = [], [], []
+
+    if run_col:
+        for _, run_df in df.groupby(run_col, sort=False):
+            run_df = run_df.sort_values('shot_time').reset_index(drop=True)
+            times_all.extend(run_df['shot_time'].values)
+            cumul_all.extend(run_df['cumulative'].values)
+            ideal_all.extend(run_df['ideal'].values)
+            # NaT/NaN spacer to break lines between runs
+            times_all.append(pd.NaT)
+            cumul_all.append(np.nan)
+            ideal_all.append(np.nan)
+    else:
+        times_all  = df['shot_time'].values
+        cumul_all  = df['cumulative'].values
+        ideal_all  = df['ideal'].values
+
+    times_all = np.array(times_all, dtype=object)
+    cumul_all = np.array(cumul_all, dtype=float)
+    ideal_all = np.array(ideal_all, dtype=float)
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=times, y=cumul,
+        x=times_all, y=cumul_all,
         mode='lines', name='Actual Strokes',
-        line=dict(color='#3498DB', width=2)
+        line=dict(color='#3498DB', width=2),
+        connectgaps=False
     ))
     fig.add_trace(go.Scatter(
-        x=times, y=ideal,
+        x=times_all, y=ideal_all,
         mode='lines', name=f'Ideal Rate ({rate_label})',
-        line=dict(color=PASTEL_COLORS['green'], width=2, dash='dash')
-    ))
-    # Filled gap — concatenate numpy arrays, no index issues
-    fig.add_trace(go.Scatter(
-        x=np.concatenate([times, times[::-1]]),
-        y=np.concatenate([ideal, cumul[::-1]]),
-        fill='toself',
-        fillcolor='rgba(255, 105, 97, 0.15)',
-        line=dict(width=0),
-        name='Production Gap',
-        showlegend=True
+        line=dict(color=PASTEL_COLORS['green'], width=2, dash='dash'),
+        connectgaps=False
     ))
     fig.update_layout(
         title='Cumulative Strokes vs Ideal Production',
@@ -1225,52 +1207,59 @@ def plot_cumulative_strokes(df, stroke_unit='SPM'):
 def plot_rolling_spm(df, stroke_unit='SPM', window_minutes=5):
     """
     Chart 4 — Rolling Average Stroke Rate.
-
-    Smoothed stroke rate over a rolling time window — cuts through shot-to-shot
-    noise to reveal genuine speed changes.  Mirrors process control trend displays
-    in Wonderware / FactoryTalk / Ignition.
+    Processed per run so inter-run gaps don't drag the rolling average to zero.
     """
     if df.empty:
         return
-    df = df.copy().sort_values('shot_time')
-    freq = 'min' if stroke_unit == 'SPM' else 'h'
-    divisor = 1 if stroke_unit == 'SPM' else 60
 
-    # Count strokes per minute/hour bucket then rolling average
-    bucket_counts = (df.set_index('shot_time')
-                       .resample(freq)
-                       .size()
-                       .rename('count'))
-    roll = bucket_counts.rolling(window=window_minutes, min_periods=1).mean()
+    freq    = 'min' if stroke_unit == 'SPM' else 'h'
+    run_col = 'run_id' if 'run_id' in df.columns else None
 
-    # Normal vs stopped breakdown per bucket
-    normal_counts  = (df[df['stop_flag'] == 0]
-                      .set_index('shot_time').resample(freq).size())
-    stopped_counts = (df[df['stop_flag'] == 1]
-                      .set_index('shot_time').resample(freq).size())
-
-    # Mode rate reference
     normal = df[df['stop_flag'] == 0]
     mode_ct_val = _get_stable_mode(normal['ACTUAL CT']) if not normal.empty else 0
-    mode_rate = ct_to_stroke_rate(mode_ct_val, stroke_unit) if mode_ct_val > 0 else None
+    mode_rate   = ct_to_stroke_rate(mode_ct_val, stroke_unit) if mode_ct_val > 0 else None
+
+    # Build per-run series then concatenate with NaN breaks
+    roll_x, roll_y = [], []
+    norm_x, norm_y = [], []
+    stop_x, stop_y = [], []
+
+    groups = df.groupby(run_col) if run_col else [('all', df)]
+    for _, run_df in groups:
+        run_df = run_df.sort_values('shot_time')
+        idx = run_df.set_index('shot_time')
+
+        n = idx[idx['stop_flag'] == 0].resample(freq).size()
+        s = idx[idx['stop_flag'] == 1].resample(freq).size()
+        total = n.add(s, fill_value=0)
+        roll  = total.rolling(window=window_minutes, min_periods=1).mean()
+
+        norm_x.extend(n.index.tolist()); norm_y.extend(n.values.tolist())
+        stop_x.extend(s.index.tolist()); stop_y.extend(s.values.tolist())
+        roll_x.extend(roll.index.tolist()); roll_y.extend(roll.values.tolist())
+
+        # NaN spacer between runs
+        for lst in [norm_x, stop_x, roll_x]:
+            lst.append(None)
+        for lst in [norm_y, stop_y, roll_y]:
+            lst.append(None)
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=normal_counts.index, y=normal_counts.values,
-        mode='none', fill='tozeroy',
+        x=norm_x, y=norm_y, mode='none', fill='tozeroy',
         fillcolor='rgba(52, 152, 219, 0.25)',
         name='Normal Strokes', showlegend=True
     ))
     fig.add_trace(go.Scatter(
-        x=stopped_counts.index, y=stopped_counts.values,
-        mode='none', fill='tozeroy',
+        x=stop_x, y=stop_y, mode='none', fill='tozeroy',
         fillcolor='rgba(255, 105, 97, 0.3)',
         name='Stopped Strokes', showlegend=True
     ))
     fig.add_trace(go.Scatter(
-        x=roll.index, y=roll.values,
-        mode='lines', name=f'{window_minutes}-period Rolling Avg',
-        line=dict(color='white', width=2.5)
+        x=roll_x, y=roll_y, mode='lines',
+        name=f'{window_minutes}-period Rolling Avg',
+        line=dict(color='white', width=2.5),
+        connectgaps=False
     ))
     if mode_rate:
         fig.add_hline(
@@ -1375,47 +1364,45 @@ def plot_spc_control_chart(df):
 def plot_press_gantt(df):
     """
     Chart 6 — Press State Timeline (Gantt).
-
-    Colour-coded horizontal timeline of Running vs Stopped states, grouped by
-    run.  Mirrors the state timeline view in Vorne XL, Ignition Perspective,
-    and Sepasoft MES.
+    State machine resets at every run boundary so inter-run gaps are
+    not rendered as continued stopped segments.
     """
     if df.empty:
         return
-    df = df.copy().sort_values('shot_time')
+    df = df.copy().sort_values('shot_time').reset_index(drop=True)
+    run_col = 'run_id' if 'run_id' in df.columns else None
 
     states = []
-    current_state = None
-    seg_start = None
+    groups = df.groupby(run_col, sort=False) if run_col else [('all', df)]
 
-    for _, row in df.iterrows():
-        state = 'Stopped' if row['stop_flag'] == 1 else 'Running'
-        run_lbl = row.get('run_label', row.get('run_id', 'Run'))
-        if state != current_state:
-            if current_state is not None:
-                states.append({
-                    'State': current_state,
-                    'Run': str(run_lbl),
-                    'Start': seg_start,
-                    'End': row['shot_time']
-                })
-            current_state = state
-            seg_start = row['shot_time']
+    for _, run_df in groups:
+        run_df = run_df.sort_values('shot_time').reset_index(drop=True)
+        run_lbl = str(run_df.get('run_label', run_df.get('run_id', pd.Series(['Run']))).iloc[0]
+                      if 'run_label' in run_df.columns
+                      else run_df['run_id'].iloc[0] if run_col else 'Run')
 
-    # Close last segment
-    if current_state and seg_start:
-        states.append({
-            'State': current_state,
-            'Run': str(df.iloc[-1].get('run_label', 'Run')),
-            'Start': seg_start,
-            'End': df['shot_time'].iloc[-1]
-        })
+        current_state = None
+        seg_start     = None
+
+        for _, row in run_df.iterrows():
+            state = 'Stopped' if row['stop_flag'] == 1 else 'Running'
+            if state != current_state:
+                if current_state is not None:
+                    states.append({'State': current_state, 'Run': run_lbl,
+                                   'Start': seg_start, 'End': row['shot_time']})
+                current_state = state
+                seg_start     = row['shot_time']
+
+        # Close last segment of this run
+        if current_state and seg_start is not None:
+            states.append({'State': current_state, 'Run': run_lbl,
+                           'Start': seg_start, 'End': run_df['shot_time'].iloc[-1]})
 
     if not states:
         st.info("No state data to build timeline.")
         return
 
-    states_df = pd.DataFrame(states)
+    states_df  = pd.DataFrame(states)
     colour_map = {'Running': '#3498DB', 'Stopped': PASTEL_COLORS['red']}
 
     fig = px.timeline(
