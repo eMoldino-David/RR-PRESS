@@ -1168,17 +1168,12 @@ def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM',
 def plot_cumulative_strokes(df, stroke_unit='SPM'):
     """
     Chart 3 — Cumulative Strokes vs Ideal Production Line.
-
-    Shows actual cumulative stroke count over time against an ideal straight-line
-    projection based on mode CT rate.  Gaps between the lines indicate downtime.
-    Common in MES / OEE dashboards (Epicor, Plex, Ignition).
     """
     if df.empty:
         return
-    df = df.copy().sort_values('shot_time')
-    df['cumulative'] = range(1, len(df) + 1)
+    df = df.copy().sort_values('shot_time').reset_index(drop=True)
+    df['cumulative'] = np.arange(1, len(df) + 1)
 
-    # Ideal line: based on mode CT of normal shots
     normal = df[df['stop_flag'] == 0]
     if normal.empty:
         st.info("No normal strokes to compute ideal rate.")
@@ -1188,26 +1183,31 @@ def plot_cumulative_strokes(df, stroke_unit='SPM'):
         return
 
     t0 = df['shot_time'].iloc[0]
-    elapsed_sec = (df['shot_time'] - t0).dt.total_seconds()
+    elapsed_sec = (df['shot_time'] - t0).dt.total_seconds().values
     df['ideal'] = elapsed_sec / mode_ct_val
 
     rate_label = f"{ct_to_stroke_rate(mode_ct_val, stroke_unit):.1f} {stroke_unit}"
 
+    # Use .values throughout to avoid index alignment issues
+    times     = df['shot_time'].values
+    cumul     = df['cumulative'].values
+    ideal     = df['ideal'].values
+
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=df['shot_time'], y=df['cumulative'],
+        x=times, y=cumul,
         mode='lines', name='Actual Strokes',
         line=dict(color='#3498DB', width=2)
     ))
     fig.add_trace(go.Scatter(
-        x=df['shot_time'], y=df['ideal'],
+        x=times, y=ideal,
         mode='lines', name=f'Ideal Rate ({rate_label})',
         line=dict(color=PASTEL_COLORS['green'], width=2, dash='dash')
     ))
-    # Fill gap between ideal and actual
+    # Filled gap — concatenate numpy arrays, no index issues
     fig.add_trace(go.Scatter(
-        x=pd.concat([df['shot_time'], df['shot_time'][::-1]]),
-        y=pd.concat([df['ideal'], df['cumulative'][::-1]]),
+        x=np.concatenate([times, times[::-1]]),
+        y=np.concatenate([ideal, cumul[::-1]]),
         fill='toself',
         fillcolor='rgba(255, 105, 97, 0.15)',
         line=dict(width=0),
