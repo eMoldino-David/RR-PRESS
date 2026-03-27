@@ -1138,13 +1138,15 @@ def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM',
 def plot_cumulative_strokes(df, stroke_unit='SPM'):
     """
     Chart 3 — Cumulative Strokes vs Ideal Production Line.
-    Inter-run gaps are excluded from the ideal-rate projection so the gap
-    only represents actual downtime within runs, not scheduled breaks.
+    Ideal rate is based on cumulative production time (ACTUAL CT sum) not
+    wall-clock elapsed time, so inter-run gaps don't inflate the ideal line.
+    Uses None spacers (not pd.NaT) to prevent Plotly treating timestamps as
+    raw nanosecond integers.
     """
     if df.empty:
         return
-    df = df.copy().sort_values('shot_time').reset_index(drop=True)
 
+    df = df.copy().sort_values('shot_time').reset_index(drop=True)
     normal = df[df['stop_flag'] == 0]
     if normal.empty:
         st.info("No normal strokes to compute ideal rate.")
@@ -1154,45 +1156,51 @@ def plot_cumulative_strokes(df, stroke_unit='SPM'):
         return
 
     rate_label = f"{ct_to_stroke_rate(mode_ct_val, stroke_unit):.1f} {stroke_unit}"
-
-    # Ideal = cumulative production time / mode_ct  (excludes inter-run gaps)
-    # adj_ct_sec already has gap time for stop shots; use ACTUAL CT for production seconds
     df['prod_elapsed'] = df['ACTUAL CT'].cumsum()
-    df['ideal'] = df['prod_elapsed'] / mode_ct_val
-    df['cumulative'] = np.arange(1, len(df) + 1)
+    df['ideal']        = df['prod_elapsed'] / mode_ct_val
+    df['cumulative']   = np.arange(1, len(df) + 1)
 
     run_col = 'run_id' if 'run_id' in df.columns else None
+    # Use plain Python lists — None spacer keeps Plotly x-axis as datetime
     times_all, cumul_all, ideal_all = [], [], []
 
-    if run_col:
-        for _, run_df in df.groupby(run_col, sort=False):
-            run_df = run_df.sort_values('shot_time').reset_index(drop=True)
-            times_all.extend(run_df['shot_time'].values)
-            cumul_all.extend(run_df['cumulative'].values)
-            ideal_all.extend(run_df['ideal'].values)
-            # NaT/NaN spacer to break lines between runs
-            times_all.append(pd.NaT)
-            cumul_all.append(np.nan)
-            ideal_all.append(np.nan)
-    else:
-        times_all  = df['shot_time'].values
-        cumul_all  = df['cumulative'].values
-        ideal_all  = df['ideal'].values
+    groups = list(df.groupby(run_col, sort=False)) if run_col else [('all', df)]
+    for i, (_, run_df) in enumerate(groups):
+        run_df = run_df.sort_values('shot_time').reset_index(drop=True)
+        times_all.extend(run_df['shot_time'].dt.to_pydatetime().tolist())
+        cumul_all.extend(run_df['cumulative'].tolist())
+        ideal_all.extend(run_df['ideal'].tolist())
+        if i < len(groups) - 1:   # spacer between runs only
+            times_all.append(None)
+            cumul_all.append(None)
+            ideal_all.append(None)
 
-    times_all = np.array(times_all, dtype=object)
-    cumul_all = np.array(cumul_all, dtype=float)
-    ideal_all = np.array(ideal_all, dtype=float)
+    with st.expander("ℹ️ How to read this chart", expanded=False):
+        st.markdown("""
+        **What it shows:** Actual total stroke count over time (blue) vs the number of
+        strokes that *should* have been produced if the press ran continuously at its
+        mode cycle time (green dashed).
+
+        **The gap:** The vertical distance between the two lines at any point = strokes
+        lost to downtime. A widening gap means performance is deteriorating; a narrowing
+        gap means the press is catching up.
+
+        **Ideal rate** is calculated from the mode CT of normal shots only — it represents
+        the press's own proven best rhythm, not a target set externally.
+
+        **Inter-run gaps** (where the run interval threshold separates two runs) are shown
+        as breaks in the line — the ideal line pauses during these gaps.
+        """)
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=times_all, y=cumul_all,
-        mode='lines', name='Actual Strokes',
-        line=dict(color='#3498DB', width=2),
+        x=times_all, y=cumul_all, mode='lines',
+        name='Actual Strokes', line=dict(color='#3498DB', width=2),
         connectgaps=False
     ))
     fig.add_trace(go.Scatter(
-        x=times_all, y=ideal_all,
-        mode='lines', name=f'Ideal Rate ({rate_label})',
+        x=times_all, y=ideal_all, mode='lines',
+        name=f'Ideal Rate ({rate_label})',
         line=dict(color=PASTEL_COLORS['green'], width=2, dash='dash'),
         connectgaps=False
     ))
@@ -1207,42 +1215,62 @@ def plot_cumulative_strokes(df, stroke_unit='SPM'):
 def plot_rolling_spm(df, stroke_unit='SPM', window_minutes=5):
     """
     Chart 4 — Rolling Average Stroke Rate.
-    Processed per run so inter-run gaps don't drag the rolling average to zero.
+    Processed per run with None spacers so inter-run gaps don't pull
+    the average to zero.
     """
     if df.empty:
         return
 
     freq    = 'min' if stroke_unit == 'SPM' else 'h'
     run_col = 'run_id' if 'run_id' in df.columns else None
-
-    normal = df[df['stop_flag'] == 0]
+    normal  = df[df['stop_flag'] == 0]
     mode_ct_val = _get_stable_mode(normal['ACTUAL CT']) if not normal.empty else 0
     mode_rate   = ct_to_stroke_rate(mode_ct_val, stroke_unit) if mode_ct_val > 0 else None
 
-    # Build per-run series then concatenate with NaN breaks
     roll_x, roll_y = [], []
     norm_x, norm_y = [], []
     stop_x, stop_y = [], []
 
-    groups = df.groupby(run_col) if run_col else [('all', df)]
-    for _, run_df in groups:
+    groups = list(df.groupby(run_col)) if run_col else [('all', df)]
+    for i, (_, run_df) in enumerate(groups):
         run_df = run_df.sort_values('shot_time')
-        idx = run_df.set_index('shot_time')
+        idx    = run_df.set_index('shot_time')
 
-        n = idx[idx['stop_flag'] == 0].resample(freq).size()
-        s = idx[idx['stop_flag'] == 1].resample(freq).size()
+        n     = idx[idx['stop_flag'] == 0].resample(freq).size()
+        s     = idx[idx['stop_flag'] == 1].resample(freq).size()
         total = n.add(s, fill_value=0)
         roll  = total.rolling(window=window_minutes, min_periods=1).mean()
 
-        norm_x.extend(n.index.tolist()); norm_y.extend(n.values.tolist())
-        stop_x.extend(s.index.tolist()); stop_y.extend(s.values.tolist())
-        roll_x.extend(roll.index.tolist()); roll_y.extend(roll.values.tolist())
+        norm_x.extend(n.index.to_pydatetime().tolist())
+        norm_y.extend(n.values.tolist())
+        stop_x.extend(s.index.to_pydatetime().tolist())
+        stop_y.extend(s.values.tolist())
+        roll_x.extend(roll.index.to_pydatetime().tolist())
+        roll_y.extend(roll.values.tolist())
 
-        # NaN spacer between runs
-        for lst in [norm_x, stop_x, roll_x]:
-            lst.append(None)
-        for lst in [norm_y, stop_y, roll_y]:
-            lst.append(None)
+        if i < len(groups) - 1:
+            for lst in [norm_x, stop_x, roll_x]: lst.append(None)
+            for lst in [norm_y, stop_y, roll_y]: lst.append(None)
+
+    with st.expander("ℹ️ How to read this chart", expanded=False):
+        st.markdown(f"""
+        **What it shows:** The stroke rate per {'minute' if stroke_unit == 'SPM' else 'hour'}
+        smoothed using a {window_minutes}-period rolling average (white line), with
+        the underlying normal (blue area) and stopped (red area) stroke counts shown per bucket.
+
+        **Why smooth it?** Individual minute/hour buckets can vary due to timing — a stroke
+        that falls just over a minute boundary inflates one bucket and deflates the next.
+        The rolling average removes this noise and shows the genuine speed trend.
+
+        **What to look for:**
+        - White line consistently below the green mode line → press running slower than its proven rate
+        - Red areas clustering at certain times → recurring stop patterns
+        - White line trending downward → press slowing over the shift (wear, lubrication, heat)
+        - Sudden drops to near zero → unplanned stoppages
+
+        **Rolling window slider:** Wider window = smoother line but slower to show changes.
+        Narrower = more reactive but noisier.
+        """)
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -1281,10 +1309,6 @@ def plot_rolling_spm(df, stroke_unit='SPM', window_minutes=5):
 def plot_spc_control_chart(df):
     """
     Chart 5 — SPC Individuals (X) + Moving Range (MR) Chart.
-
-    Classical X-MR Statistical Process Control chart on CT values for normal shots.
-    Upper/Lower Control Limits at ±3σ.  Mirrors Minitab, InfinityQS, and
-    DataLyzer outputs used in stamping QA / tooling validation.
     """
     if df.empty:
         return
@@ -1293,248 +1317,328 @@ def plot_spc_control_chart(df):
         st.info("Insufficient normal strokes for SPC chart (need ≥ 5).")
         return
 
-    ct = normal['ACTUAL CT'].values
-    mr = np.abs(np.diff(ct))
-    mr = np.insert(mr, 0, np.nan)
-
+    ct     = normal['ACTUAL CT'].values
+    mr     = np.abs(np.diff(ct))
+    mr     = np.insert(mr, 0, np.nan)
     x_bar  = np.nanmean(ct)
     mr_bar = np.nanmean(mr[1:])
-    d2     = 1.128   # SPC constant for n=2
+    d2     = 1.128
     sigma  = mr_bar / d2
-
-    ucl_x = x_bar + 3 * sigma
-    lcl_x = max(0, x_bar - 3 * sigma)
-    ucl_mr = 3.267 * mr_bar   # D4 constant
+    ucl_x  = x_bar + 3 * sigma
+    lcl_x  = max(0, x_bar - 3 * sigma)
+    ucl_mr = 3.267 * mr_bar
 
     out_of_control = (ct > ucl_x) | (ct < lcl_x)
 
+    with st.expander("ℹ️ How to read this chart", expanded=False):
+        st.markdown(f"""
+        **What it shows:** Two linked Statistical Process Control (SPC) charts on the
+        cycle time of normal strokes only.
+
+        **Top chart — Individuals (X):**
+        Each point is one stroke's CT in seconds. The control limits (red dashed lines)
+        are set at ±3σ from the mean — calculated from the natural variation of the
+        process itself, not from the tolerance slider.
+        - **Red points** = statistically out-of-control strokes (beyond UCL/LCL)
+        - **Orange dotted lines** = ±1σ — ~68% of points should fall inside these
+        - Current UCL: **{ucl_x:.2f}s** | Mean: **{x_bar:.2f}s** | LCL: **{lcl_x:.2f}s**
+
+        **Bottom chart — Moving Range (MR):**
+        The absolute difference in CT between consecutive strokes. Measures
+        *consistency* — a high MR means the press is surging and recovering.
+        - UCL: **{ucl_mr:.2f}s** | Mean MR: **{mr_bar:.2f}s**
+
+        **Key rule violations to look for:**
+        - Any single point beyond UCL/LCL (red) → special cause variation
+        - 8+ consecutive points on one side of the mean → process shift
+        - 6+ points trending in one direction → drift (tool wear, temperature)
+
+        **Note:** These limits are derived from the data itself using the
+        standard d₂ = 1.128 constant (n=2 subgroup). This is the same
+        method used in Minitab and InfinityQS for individual measurements.
+        """)
+
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                        subplot_titles=('Individuals Chart (X)', 'Moving Range Chart (MR)'),
+                        subplot_titles=('Individuals Chart (X) — Cycle Time per Stroke',
+                                        'Moving Range Chart (MR) — Stroke-to-Stroke Variation'),
                         vertical_spacing=0.12)
 
-    # X chart
     fig.add_trace(go.Scatter(
         x=normal['shot_time'], y=ct, mode='lines+markers',
         name='CT (sec)',
-        marker=dict(
-            color=np.where(out_of_control, PASTEL_COLORS['red'], '#3498DB'),
-            size=4
-        ),
+        marker=dict(color=np.where(out_of_control,
+                                   PASTEL_COLORS['red'], '#3498DB'), size=4),
         line=dict(color='#3498DB', width=1)
     ), row=1, col=1)
+
     for y_val, lbl, colour, dash in [
-        (x_bar,  f'Mean ({x_bar:.2f}s)',   '#FFFFFF', 'solid'),
-        (ucl_x,  f'UCL ({ucl_x:.2f}s)',    PASTEL_COLORS['red'],    'dash'),
-        (lcl_x,  f'LCL ({lcl_x:.2f}s)',    PASTEL_COLORS['red'],    'dash'),
-        (x_bar + sigma,   '+1σ', PASTEL_COLORS['orange'], 'dot'),
-        (x_bar - sigma,   '−1σ', PASTEL_COLORS['orange'], 'dot'),
+        (x_bar,        f'Mean ({x_bar:.2f}s)',  '#FFFFFF',               'solid'),
+        (ucl_x,        f'UCL ({ucl_x:.2f}s)',   PASTEL_COLORS['red'],    'dash'),
+        (lcl_x,        f'LCL ({lcl_x:.2f}s)',   PASTEL_COLORS['red'],    'dash'),
+        (x_bar+sigma,  '+1σ',                   PASTEL_COLORS['orange'], 'dot'),
+        (x_bar-sigma,  '−1σ',                   PASTEL_COLORS['orange'], 'dot'),
     ]:
-        fig.add_hline(y=y_val, line_dash=dash, line_color=colour,
-                      line_width=1.2,
+        fig.add_hline(y=y_val, line_dash=dash, line_color=colour, line_width=1.2,
                       annotation_text=lbl, annotation_position='top right',
                       annotation_font_color=colour, row=1, col=1)
 
-    # MR chart
     fig.add_trace(go.Scatter(
         x=normal['shot_time'], y=mr, mode='lines+markers',
         name='Moving Range',
         marker=dict(color=PASTEL_COLORS['orange'], size=4),
         line=dict(color=PASTEL_COLORS['orange'], width=1)
     ), row=2, col=1)
+
     for y_val, lbl, colour, dash in [
-        (mr_bar,  f'Mean MR ({mr_bar:.2f}s)',  '#FFFFFF',              'solid'),
-        (ucl_mr,  f'UCL ({ucl_mr:.2f}s)',      PASTEL_COLORS['red'],   'dash'),
+        (mr_bar,  f'Mean MR ({mr_bar:.2f}s)', '#FFFFFF',             'solid'),
+        (ucl_mr,  f'UCL ({ucl_mr:.2f}s)',     PASTEL_COLORS['red'],  'dash'),
     ]:
-        fig.add_hline(y=y_val, line_dash=dash, line_color=colour,
-                      line_width=1.2,
+        fig.add_hline(y=y_val, line_dash=dash, line_color=colour, line_width=1.2,
                       annotation_text=lbl, annotation_position='top right',
                       annotation_font_color=colour, row=2, col=1)
 
     fig.update_layout(
         title='SPC Control Chart – Cycle Time (X-MR)',
-        height=520,
-        showlegend=False,
+        height=520, showlegend=False,
         xaxis2_title='Time',
-        yaxis_title='CT (sec)',
-        yaxis2_title='Moving Range (sec)'
+        yaxis_title='CT (sec)', yaxis2_title='Moving Range (sec)'
     )
     st.plotly_chart(fig, width='stretch')
 
 
-def plot_press_gantt(df):
+def plot_stoppage_pareto(df):
     """
-    Chart 6 — Press State Timeline (Gantt).
-    State machine resets at every run boundary so inter-run gaps are
-    not rendered as continued stopped segments.
+    Chart 6 — Stoppage Pareto (Duration × Frequency).
+    Shows which stop durations account for the most lost time.
     """
     if df.empty:
         return
-    df = df.copy().sort_values('shot_time').reset_index(drop=True)
-    run_col = 'run_id' if 'run_id' in df.columns else None
 
-    states = []
-    groups = df.groupby(run_col, sort=False) if run_col else [('all', df)]
-
-    for _, run_df in groups:
-        run_df = run_df.sort_values('shot_time').reset_index(drop=True)
-        run_lbl = str(run_df.get('run_label', run_df.get('run_id', pd.Series(['Run']))).iloc[0]
-                      if 'run_label' in run_df.columns
-                      else run_df['run_id'].iloc[0] if run_col else 'Run')
-
-        current_state = None
-        seg_start     = None
-
-        for _, row in run_df.iterrows():
-            state = 'Stopped' if row['stop_flag'] == 1 else 'Running'
-            if state != current_state:
-                if current_state is not None:
-                    states.append({'State': current_state, 'Run': run_lbl,
-                                   'Start': seg_start, 'End': row['shot_time']})
-                current_state = state
-                seg_start     = row['shot_time']
-
-        # Close last segment of this run
-        if current_state and seg_start is not None:
-            states.append({'State': current_state, 'Run': run_lbl,
-                           'Start': seg_start, 'End': run_df['shot_time'].iloc[-1]})
-
-    if not states:
-        st.info("No state data to build timeline.")
+    # Extract stop events and their durations
+    stop_shots = df[df['stop_flag'] == 1].copy()
+    if stop_shots.empty:
+        st.info("No stop events found in this period.")
         return
 
-    states_df  = pd.DataFrame(states)
-    colour_map = {'Running': '#3498DB', 'Stopped': PASTEL_COLORS['red']}
+    # Group consecutive stop shots into events, measure duration per event
+    stop_shots = stop_shots.sort_values('shot_time').reset_index(drop=True)
+    stop_shots['event_id'] = (stop_shots['stop_event'].cumsum()
+                              if 'stop_event' in stop_shots.columns
+                              else 0)
 
-    fig = px.timeline(
-        states_df, x_start='Start', x_end='End', y='Run',
-        color='State', color_discrete_map=colour_map,
-        title='Press State Timeline (Running vs Stopped)'
-    )
-    fig.update_yaxes(autorange='reversed')
+    events = (stop_shots.groupby('event_id')
+              .agg(duration_sec=('adj_ct_sec', 'sum'),
+                   start=('shot_time', 'min'))
+              .reset_index())
+
+    events['duration_min'] = events['duration_sec'] / 60
+
+    # Bucket stop durations
+    edges  = [0, 1, 2, 5, 10, 20, 60, np.inf]
+    labels = ['<1 min', '1–2 min', '2–5 min', '5–10 min',
+              '10–20 min', '20–60 min', '>60 min']
+    events['bucket'] = pd.cut(events['duration_min'], bins=edges,
+                               labels=labels, right=False)
+
+    pareto = (events.groupby('bucket', observed=True)
+              .agg(count=('duration_min', 'count'),
+                   total_min=('duration_min', 'sum'))
+              .reset_index())
+    pareto = pareto[pareto['count'] > 0].copy()
+    pareto['cum_pct'] = (pareto['total_min'].cumsum()
+                         / pareto['total_min'].sum() * 100)
+
+    with st.expander("ℹ️ How to read this chart", expanded=False):
+        st.markdown("""
+        **What it shows:** A Pareto analysis of stop events, split by duration bucket.
+
+        **Left axis (bars):** Number of stop events in each duration category.
+
+        **Right axis (line):** Cumulative % of total downtime accounted for by stops up
+        to and including that bucket.
+
+        **How to use it:**
+        - If the line reaches 80% early (e.g. at the 2–5 min bucket), then short stops
+          are your biggest downtime driver — focus on eliminating frequent short stops.
+        - If the line is flat until a long-duration bucket, then rare but long stops
+          dominate — focus on faster recovery or root-cause elimination of major faults.
+        - Classic Pareto principle: fixing the 20% of stop types that cause 80% of
+          downtime delivers the best ROI.
+        """)
+
+    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    colours = [PASTEL_COLORS['red'] if i < 2
+               else PASTEL_COLORS['orange'] if i < 4
+               else PASTEL_COLORS['green']
+               for i in range(len(pareto))]
+    fig.add_trace(go.Bar(
+        x=pareto['bucket'].astype(str), y=pareto['count'],
+        name='Stop Count', marker_color=colours,
+        text=pareto['count'], textposition='outside'
+    ), secondary_y=False)
+    fig.add_trace(go.Scatter(
+        x=pareto['bucket'].astype(str), y=pareto['cum_pct'],
+        mode='lines+markers+text',
+        name='Cumulative Downtime %',
+        line=dict(color='white', width=2),
+        text=[f"{v:.0f}%" for v in pareto['cum_pct']],
+        textposition='top center',
+        textfont=dict(color='white')
+    ), secondary_y=True)
     fig.update_layout(
-        xaxis_title='Time', yaxis_title='Run',
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-        height=max(250, len(states_df['Run'].unique()) * 40 + 100)
+        title='Stoppage Pareto — Duration × Frequency',
+        xaxis_title='Stop Duration', yaxis_title='Number of Stops',
+        yaxis2=dict(title='Cumulative Downtime %', range=[0, 110]),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
     )
     st.plotly_chart(fig, width='stretch')
 
 
-def plot_ct_histogram(df):
+def plot_interstroke_gap(df):
     """
-    Chart 7 — Cycle Time Distribution Histogram.
-
-    Frequency distribution of CT values split by Normal / Stopped shots, with
-    vertical markers for mode CT and tolerance limits.  Used in tooling validation
-    and capability studies — similar to Minitab histogram with spec lines.
+    Chart 7 — Inter-stroke Gap Distribution.
+    Distribution of time between consecutive strokes — reveals the
+    signature of different stop types.
     """
     if df.empty:
         return
-    normal  = df[df['stop_flag'] == 0]['ACTUAL CT'].dropna()
-    stopped = df[df['stop_flag'] == 1]['ACTUAL CT'].dropna()
 
-    if normal.empty:
-        st.info("No normal stroke data for histogram.")
+    gaps = df['time_diff_sec'].dropna()
+    gaps = gaps[(gaps > 0) & (gaps < 600)]   # cap at 10 min for readability
+    if gaps.empty:
+        st.info("No inter-stroke gap data available.")
         return
 
-    mode_ct_val = _get_stable_mode(normal)
-    lower_lim = df['lower_limit'].iloc[0] if 'lower_limit' in df.columns else None
-    upper_lim = df['upper_limit'].iloc[0] if 'upper_limit' in df.columns else None
+    mode_ct_val = df['mode_ct'].iloc[0] if 'mode_ct' in df.columns else gaps.median()
+    lower = df['lower_limit'].iloc[0] if 'lower_limit' in df.columns else None
+    upper = df['upper_limit'].iloc[0] if 'upper_limit' in df.columns else None
+
+    with st.expander("ℹ️ How to read this chart", expanded=False):
+        st.markdown(f"""
+        **What it shows:** The distribution of time (in seconds) between consecutive strokes.
+
+        **The sharp peak** near the mode CT ({mode_ct_val:.1f}s) is the press running
+        normally — most strokes happen at the expected interval.
+
+        **The tail to the right** reveals stop events by their gap duration:
+        - Small secondary peaks (e.g. 30–120s) → operator interventions, misfeed recoveries
+        - Peaks at round numbers (60s, 120s, 300s) → often indicate automatic retry timers
+          or fixed alarm acknowledgement procedures
+        - Long flat tail → random/complex faults with variable recovery time
+
+        **Green band** = tolerance window — strokes within this interval are classified as normal.
+        Strokes outside it triggered the stop detection logic.
+
+        This view is used in press diagnostics to distinguish between:
+        - **Micro-stops** (1–5× CT): most common, often unlogged by operators
+        - **Short stops** (5–60s): misfeed, jam, part quality check
+        - **Long stops** (>60s): tooling, maintenance, changeover
+        """)
 
     fig = go.Figure()
     fig.add_trace(go.Histogram(
-        x=normal, name='Normal Strokes',
+        x=gaps, nbinsx=80,
         marker_color='rgba(52, 152, 219, 0.7)',
-        nbinsx=50, xbins=dict(size=0.5)
+        name='Gap Duration'
     ))
-    if not stopped.empty:
-        fig.add_trace(go.Histogram(
-            x=stopped, name='Stopped Strokes',
-            marker_color='rgba(255, 105, 97, 0.7)',
-            nbinsx=50, xbins=dict(size=0.5)
-        ))
-
     for val, lbl, colour, dash in [
-        (mode_ct_val, f'Mode CT ({mode_ct_val:.2f}s)', '#FFFFFF', 'solid'),
-        (lower_lim,   f'Lower Limit ({lower_lim:.2f}s)' if lower_lim else None,
+        (mode_ct_val, f'Mode CT ({mode_ct_val:.1f}s)', '#FFFFFF', 'solid'),
+        (lower, f'Lower Limit ({lower:.1f}s)' if lower else None,
          PASTEL_COLORS['orange'], 'dash'),
-        (upper_lim,   f'Upper Limit ({upper_lim:.2f}s)' if upper_lim else None,
-         PASTEL_COLORS['orange'], 'dash'),
+        (upper, f'Upper Limit ({upper:.1f}s)' if upper else None,
+         PASTEL_COLORS['red'], 'dash'),
     ]:
         if val is not None and lbl is not None:
-            fig.add_vline(x=val, line_dash=dash, line_color=colour,
-                          line_width=2,
+            fig.add_vline(x=val, line_dash=dash, line_color=colour, line_width=2,
                           annotation_text=lbl, annotation_position='top right',
                           annotation_font_color=colour)
-
     fig.update_layout(
-        barmode='overlay',
-        title='Cycle Time Distribution',
-        xaxis_title='Cycle Time (sec)',
+        title='Inter-stroke Gap Distribution',
+        xaxis_title='Time Between Strokes (sec)',
         yaxis_title='Frequency',
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
     )
     st.plotly_chart(fig, width='stretch')
 
 
-def plot_spm_heatmap(df, stroke_unit='SPM'):
+def plot_ct_histogram(df):
     """
-    Chart 8 — Stroke Rate Heatmap (Hour × Day).
-
-    Colour matrix where each cell = stroke rate for that hour of that day.
-    Instantly reveals shift patterns, warm-up behaviour, and recurring slow
-    periods.  Standard view in SCADA historian dashboards (Ignition, Wonderware,
-    OSIsoft PI).
+    Chart 8 — Cycle Time Distribution Histogram.
+    Caps x-axis at upper_limit * 3 to exclude 999.9 hard-stop sentinel values.
     """
     if df.empty:
         return
-    df = df.copy()
-    df['_hour'] = df['shot_time'].dt.hour
-    df['_date'] = df['shot_time'].dt.date.astype(str)
+    mode_ct_val = _get_stable_mode(df[df['stop_flag'] == 0]['ACTUAL CT'].dropna())
+    lower_lim   = df['lower_limit'].iloc[0] if 'lower_limit' in df.columns else None
+    upper_lim   = df['upper_limit'].iloc[0] if 'upper_limit' in df.columns else None
 
-    freq = 'h'
-    df['_bucket'] = df['shot_time'].dt.floor(freq)
+    # Cap to exclude 999.9 sentinel and long-tail outliers
+    x_cap   = (upper_lim * 4) if upper_lim else (mode_ct_val * 6 if mode_ct_val else 200)
+    normal  = df[df['stop_flag'] == 0]['ACTUAL CT'].dropna()
+    normal  = normal[normal <= x_cap]
+    stopped = df[df['stop_flag'] == 1]['ACTUAL CT'].dropna()
+    stopped = stopped[stopped <= x_cap]
 
-    bucket_counts = (df.groupby(['_date', '_hour'])
-                       .size()
-                       .reset_index(name='rate'))
-
-    pivot = bucket_counts.pivot(index='_hour', columns='_date', values='rate').fillna(0)
-
-    if pivot.empty:
-        st.info("Not enough data across multiple hours/days for heatmap.")
+    if normal.empty:
+        st.info("No normal stroke data for histogram.")
         return
 
-    rate_lbl = 'SPH' if stroke_unit == 'SPH' else 'SPM'
-    # For SPM the bucket is 1h so we divide by 60 to get per-minute equivalent
-    if stroke_unit == 'SPM':
-        pivot = pivot / 60.0
+    n_excluded = (df['ACTUAL CT'].dropna() > x_cap).sum()
 
-    fig = go.Figure(go.Heatmap(
-        z=pivot.values,
-        x=pivot.columns.tolist(),
-        y=[f'{h:02d}:00' for h in pivot.index],
-        colorscale=[
-            [0.0,  PASTEL_COLORS['red']],
-            [0.5,  PASTEL_COLORS['orange']],
-            [1.0,  PASTEL_COLORS['green']],
-        ],
-        colorbar=dict(title=rate_lbl),
-        hovertemplate='Date: %{x}<br>Hour: %{y}<br>Rate: %{z:.1f} ' + rate_lbl + '<extra></extra>'
+    with st.expander("ℹ️ How to read this chart", expanded=False):
+        st.markdown(f"""
+        **What it shows:** Frequency distribution of all cycle times, split into
+        normal strokes (blue) and stopped strokes (red).
+
+        **The tall blue peak** around the mode CT ({mode_ct_val:.1f}s) is the press
+        running in its normal rhythm. The tighter this peak, the more consistent
+        the press is.
+
+        **Stopped strokes (red)** appear to the right — these are shots where the CT
+        exceeded the upper tolerance limit. Their distribution reveals:
+        - A peak just above the upper limit → most stops are brief hesitations
+        - A spread-out tail → stops vary widely in duration (many different causes)
+        - Peaks at specific values → recurring fault types with consistent recovery times
+
+        **Orange lines** = tolerance band. Shots outside this band triggered stop detection.
+
+        **Note:** {n_excluded} shots with CT > {x_cap:.0f}s (including 999.9s hard-stop
+        sentinels) are excluded from this view to prevent the scale being compressed.
+        They are still included in all stability metrics.
+        """)
+
+    bin_size = max(0.2, mode_ct_val * 0.05) if mode_ct_val else 0.5
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(
+        x=normal, name='Normal Strokes',
+        marker_color='rgba(52, 152, 219, 0.7)',
+        xbins=dict(size=bin_size)
     ))
+    if not stopped.empty:
+        fig.add_trace(go.Histogram(
+            x=stopped, name='Stopped Strokes',
+            marker_color='rgba(255, 105, 97, 0.7)',
+            xbins=dict(size=bin_size)
+        ))
+    for val, lbl, colour, dash in [
+        (mode_ct_val, f'Mode CT ({mode_ct_val:.2f}s)', '#FFFFFF', 'solid'),
+        (lower_lim,   f'Lower ({lower_lim:.2f}s)' if lower_lim else None,
+         PASTEL_COLORS['orange'], 'dash'),
+        (upper_lim,   f'Upper ({upper_lim:.2f}s)' if upper_lim else None,
+         PASTEL_COLORS['orange'], 'dash'),
+    ]:
+        if val is not None and lbl is not None:
+            fig.add_vline(x=val, line_dash=dash, line_color=colour, line_width=2,
+                          annotation_text=lbl, annotation_position='top right',
+                          annotation_font_color=colour)
     fig.update_layout(
-        title=f'Stroke Rate Heatmap ({rate_lbl}) — Hour × Day',
-        xaxis_title='Date',
-        yaxis_title='Hour of Day',
-        yaxis=dict(autorange='reversed')
+        barmode='overlay',
+        title=f'Cycle Time Distribution (capped at {x_cap:.0f}s)',
+        xaxis_title='Cycle Time (sec)', yaxis_title='Frequency',
+        xaxis=dict(range=[0, x_cap]),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
     )
     st.plotly_chart(fig, width='stretch')
-
-
-def plot_trend_chart(df, x_col, y_col, title, x_title, y_title,
-                     y_range=None, is_stability=False):
-    if y_range is None:
-        y_range = [0, 101]
-    fig = go.Figure()
     marker_config = {}
 
     if y_col not in df.columns:
