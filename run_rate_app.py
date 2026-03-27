@@ -788,8 +788,11 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         if pd.isna(min_val) or pd.isna(max_val):
             return "N/A"
         if to_spm:
-            min_val = rr_utils.ct_to_stroke_rate(max_val, _su)  # limits invert
-            max_val = rr_utils.ct_to_stroke_rate(min_val, _su)
+            # Limits invert under reciprocal transform: high CT → low SPM
+            # Use temp vars to avoid overwriting min_val before it's used
+            _lo = rr_utils.ct_to_stroke_rate(max_val, _su)
+            _hi = rr_utils.ct_to_stroke_rate(min_val, _su)
+            min_val, max_val = _lo, _hi
             if pd.isna(min_val) or pd.isna(max_val):
                 return "N/A"
         if abs(min_val - max_val) < 0.005:
