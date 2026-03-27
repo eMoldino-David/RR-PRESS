@@ -1041,7 +1041,123 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
     st.plotly_chart(fig, width='stretch')
 
 
-def plot_trend_chart(df, x_col, y_col, title, x_title, y_title,
+def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM',
+                           show_approved_ct=False):
+    """
+    Industry-standard stroke rate chart for press / stamping tools.
+
+    Aggregates actual stroke counts into time buckets and displays the
+    resulting rate — identical to Vorne XL / Schuler / Ignition SCADA style.
+
+    SPM → 1-minute buckets  (count per minute  = SPM for that minute)
+    SPH → 1-hour   buckets  (count per hour    = SPH for that hour)
+
+    Stacked bars show Normal Strokes (blue) vs Stopped Strokes (red).
+    A horizontal target line is drawn at the approved / mode rate.
+    """
+    if df.empty:
+        st.info("No stroke data to display for this period.")
+        return
+
+    df = df.copy()
+
+    # --- time bucket ---
+    if stroke_unit == 'SPH':
+        freq       = 'h'
+        bucket_lbl = 'Hour'
+        rate_lbl   = 'Strokes Per Hour (SPH)'
+        title      = 'Run Rate – Stroke Chart (SPH)'
+    else:
+        freq       = 'min'
+        bucket_lbl = 'Minute'
+        rate_lbl   = 'Strokes Per Minute (SPM)'
+        title      = 'Run Rate – Stroke Chart (SPM)'
+
+    df['bucket'] = df['shot_time'].dt.floor(freq)
+
+    # Count normal vs stopped strokes per bucket
+    normal_counts  = (df[df['stop_flag'] == 0]
+                      .groupby('bucket').size()
+                      .rename('normal'))
+    stopped_counts = (df[df['stop_flag'] == 1]
+                      .groupby('bucket').size()
+                      .rename('stopped'))
+
+    agg = (pd.DataFrame({'normal': normal_counts, 'stopped': stopped_counts})
+             .fillna(0)
+             .astype(int)
+             .reset_index())
+    agg['total'] = agg['normal'] + agg['stopped']
+
+    if agg.empty:
+        st.info("No data to aggregate.")
+        return
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        x=agg['bucket'], y=agg['normal'],
+        name='Normal Strokes', marker_color='#3498DB',
+        hovertemplate='%{x}<br>Normal: %{y}<extra></extra>'
+    ))
+    fig.add_trace(go.Bar(
+        x=agg['bucket'], y=agg['stopped'],
+        name='Stopped Strokes', marker_color=PASTEL_COLORS['red'],
+        hovertemplate='%{x}<br>Stopped: %{y}<extra></extra>'
+    ))
+
+    # --- target / approved rate line ---
+    if show_approved_ct and 'approved_ct' in df.columns:
+        valid_app = df['approved_ct'].dropna()
+        if not valid_app.empty:
+            app_ct  = float(valid_app.mode().iloc[0]
+                            if not valid_app.mode().empty else valid_app.mean())
+            app_rate = ct_to_stroke_rate(app_ct, stroke_unit)
+            if app_rate and not np.isnan(app_rate):
+                fig.add_hline(
+                    y=app_rate,
+                    line_dash='dash', line_color='#00FF00', line_width=2,
+                    annotation_text=f'Approved {stroke_unit}: {app_rate:.0f}',
+                    annotation_position='top right',
+                    annotation_font_color='#00FF00'
+                )
+
+    # --- mode rate reference line ---
+    if isinstance(mode_ct, (int, float)) and mode_ct > 0:
+        mode_rate = ct_to_stroke_rate(mode_ct, stroke_unit)
+        if mode_rate and not np.isnan(mode_rate):
+            fig.add_hline(
+                y=mode_rate,
+                line_dash='dot', line_color='#AAAAAA', line_width=1.5,
+                annotation_text=f'Mode {stroke_unit}: {mode_rate:.0f}',
+                annotation_position='bottom right',
+                annotation_font_color='#AAAAAA'
+            )
+
+    # --- run boundaries ---
+    if 'run_id' in df.columns:
+        run_starts = df.groupby('run_id')['shot_time'].min().sort_values()
+        for start_time in run_starts.iloc[1:]:
+            fig.add_vline(
+                x=start_time, line_width=2,
+                line_dash='dash', line_color='purple'
+            )
+
+    # y-axis cap: 120% of max total, minimum sensible floor
+    y_max = agg['total'].max() if not agg.empty else 100
+    fig.update_layout(
+        barmode='stack',
+        title=title,
+        xaxis_title=bucket_lbl,
+        yaxis_title=rate_lbl,
+        yaxis=dict(range=[0, y_max * 1.2]),
+        bargap=0.1,
+        legend=dict(orientation='h', yanchor='bottom', y=1.02,
+                    xanchor='right', x=1),
+        xaxis=dict(showgrid=True)
+    )
+
+    st.plotly_chart(fig, width='stretch')
                      y_range=None, is_stability=False):
     if y_range is None:
         y_range = [0, 101]

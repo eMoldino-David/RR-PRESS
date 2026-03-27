@@ -890,22 +890,30 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
     st.markdown("---")
 
     # ------------------------------------------------------------------
-    # 3. Shot bar chart
+    # 3. Stroke / cycle time chart
     # ------------------------------------------------------------------
     time_agg = ('hourly' if "Daily" in analysis_level
                 else 'daily' if 'Weekly' in analysis_level
                 else 'weekly')
 
-    rr_utils.plot_shot_bar_chart(
-        results['processed_df'],
-        results.get('lower_limit'),
-        results.get('upper_limit'),
-        results.get('mode_ct'),
-        time_agg=time_agg,
-        show_approved_ct=show_approved_ct,
-        press_mode=press_mode,
-        stroke_unit=stroke_unit
-    )
+    if press_mode:
+        rr_utils.plot_stroke_rate_chart(
+            results['processed_df'],
+            results.get('mode_ct'),
+            stroke_unit=stroke_unit,
+            show_approved_ct=show_approved_ct
+        )
+    else:
+        rr_utils.plot_shot_bar_chart(
+            results['processed_df'],
+            results.get('lower_limit'),
+            results.get('upper_limit'),
+            results.get('mode_ct'),
+            time_agg=time_agg,
+            show_approved_ct=show_approved_ct,
+            press_mode=False,
+            stroke_unit=stroke_unit
+        )
 
     with st.expander("View Shot Data Table", expanded=False):
         cols_to_show = ['shot_time', 'ACTUAL CT', 'adj_ct_sec',
