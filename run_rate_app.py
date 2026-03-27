@@ -305,6 +305,19 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
     def _T(shot_term, stroke_term):
         return stroke_term if press_mode else shot_term
 
+    # SPM / SPH unit toggle (only shown in press mode)
+    if press_mode:
+        stroke_unit = st.radio(
+            "Stroke Rate Display Unit",
+            options=["SPM", "SPH"],
+            index=0,
+            horizontal=True,
+            key="rr_stroke_unit",
+            help="SPM = Strokes Per Minute  |  SPH = Strokes Per Hour"
+        )
+    else:
+        stroke_unit = "SPM"  # unused in non-press mode
+
     analysis_level = st.radio(
         "Select Analysis Level",
         options=["Daily (by Run)", "Weekly (by Run)", "Monthly (by Run)", "Custom Period (by Run)"],
@@ -775,7 +788,8 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         if pd.isna(min_val) or pd.isna(max_val):
             return "N/A"
         if to_spm:
-            min_val, max_val = rr_utils.ct_to_spm(max_val), rr_utils.ct_to_spm(min_val)
+            min_val = rr_utils.ct_to_stroke_rate(max_val, _su)  # limits invert
+            max_val = rr_utils.ct_to_stroke_rate(min_val, _su)
             if pd.isna(min_val) or pd.isna(max_val):
                 return "N/A"
         if abs(min_val - max_val) < 0.005:
@@ -783,10 +797,11 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         return f"{min_val:.2f} – {max_val:.2f}"
 
     _pm = press_mode  # shorthand
-    _lbl_mode   = "Mode SPM"             if _pm else "Mode Cycle Time (sec)"
-    _lbl_lower  = "Lower SPM Limit"      if _pm else "Lower Limit (sec)"
-    _lbl_upper  = "Upper SPM Limit"      if _pm else "Upper Limit (sec)"
-    _lbl_app    = "Approved SPM"         if _pm else "Approved CT (sec)"
+    _su = stroke_unit
+    _lbl_mode   = f"Mode {_su}"              if _pm else "Mode Cycle Time (sec)"
+    _lbl_lower  = f"Lower {_su} Limit"       if _pm else "Lower Limit (sec)"
+    _lbl_upper  = f"Upper {_su} Limit"       if _pm else "Upper Limit (sec)"
+    _lbl_app    = f"Approved {_su}"          if _pm else "Approved CT (sec)"
 
     _mode_lo = summary_metrics.get('min_mode_ct', 0)
     _mode_hi = summary_metrics.get('max_mode_ct', 0)
@@ -888,7 +903,8 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         results.get('mode_ct'),
         time_agg=time_agg,
         show_approved_ct=show_approved_ct,
-        press_mode=press_mode
+        press_mode=press_mode,
+        stroke_unit=stroke_unit
     )
 
     with st.expander("View Shot Data Table", expanded=False):

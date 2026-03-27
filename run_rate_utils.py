@@ -60,6 +60,22 @@ def ct_to_spm(ct_sec):
     return float(result) if np.ndim(result) == 0 else result
 
 
+def ct_to_sph(ct_sec):
+    """Convert cycle time (seconds) to Strokes Per Hour. Vectorised-safe."""
+    with np.errstate(divide='ignore', invalid='ignore'):
+        result = np.where(
+            (pd.isna(ct_sec)) | (np.asarray(ct_sec, dtype=float) <= 0),
+            np.nan,
+            3600.0 / np.asarray(ct_sec, dtype=float)
+        )
+    return float(result) if np.ndim(result) == 0 else result
+
+
+def ct_to_stroke_rate(ct_sec, unit='SPM'):
+    """Convert CT (sec) to SPM or SPH depending on unit string."""
+    return ct_to_sph(ct_sec) if unit == 'SPH' else ct_to_spm(ct_sec)
+
+
 
 
 
@@ -900,20 +916,22 @@ def create_gauge(value, title, steps=None):
 
 
 def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
-                        time_agg='hourly', show_approved_ct=False, press_mode=False):
+                        time_agg='hourly', show_approved_ct=False,
+                        press_mode=False, stroke_unit='SPM'):
     if df.empty:
         st.info("No shot data to display for this period.")
         return
     df = df.copy()
 
-    # In press mode convert y values to SPM (60 / CT_sec)
+    # In press mode convert y values to SPM or SPH (60/CT or 3600/CT)
     if press_mode:
-        df['_y'] = ct_to_spm(df['adj_ct_sec'].values)
-        _lower_y = ct_to_spm(upper_limit) if upper_limit else None   # limits invert
-        _upper_y = ct_to_spm(lower_limit) if lower_limit else None
-        _mode_y  = ct_to_spm(mode_ct) if isinstance(mode_ct, (int, float)) else None
-        _y_label = "Strokes Per Minute (SPM)"
-        _title   = "Run Rate – Stroke Chart (SPM)"
+        _conv = lambda v: ct_to_stroke_rate(v, stroke_unit)
+        df['_y'] = _conv(df['adj_ct_sec'].values)
+        _lower_y = _conv(upper_limit) if upper_limit else None   # limits invert
+        _upper_y = _conv(lower_limit) if lower_limit else None
+        _mode_y  = _conv(mode_ct) if isinstance(mode_ct, (int, float)) else None
+        _y_label = f"Strokes Per {'Hour' if stroke_unit == 'SPH' else 'Minute'} ({stroke_unit})"
+        _title   = f"Run Rate – Stroke Chart ({stroke_unit})"
     else:
         df['_y'] = df['adj_ct_sec']
         _lower_y, _upper_y = lower_limit, upper_limit
@@ -968,7 +986,7 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
     ))
 
     if show_approved_ct and 'approved_ct' in df.columns:
-        _app_y = ct_to_spm(df['approved_ct'].values) if press_mode else df['approved_ct']
+        _app_y = ct_to_stroke_rate(df['approved_ct'].values, stroke_unit) if press_mode else df['approved_ct']
         fig.add_trace(go.Scatter(
             x=df['plot_time'], y=_app_y, mode='lines',
             name=_app_label, line=dict(color='#00FF00', width=2, dash='dash')
@@ -978,9 +996,9 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
     if 'lower_limit' in df.columns and 'run_id' in df.columns:
         for run_id_val, group in df.groupby('run_id'):
             if not group.empty:
-                band_lo = (ct_to_spm(group['upper_limit'].iloc[0]) if press_mode
+                band_lo = (ct_to_stroke_rate(group['upper_limit'].iloc[0], stroke_unit) if press_mode
                            else group['lower_limit'].iloc[0])
-                band_hi = (ct_to_spm(group['lower_limit'].iloc[0]) if press_mode
+                band_hi = (ct_to_stroke_rate(group['lower_limit'].iloc[0], stroke_unit) if press_mode
                            else group['upper_limit'].iloc[0])
                 fig.add_shape(
                     type="rect", xref="x", yref="y",
