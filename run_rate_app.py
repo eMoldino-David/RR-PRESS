@@ -900,12 +900,115 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 else 'weekly')
 
     if press_mode:
+        # ── Chart 1: Bucketed Stroke Rate (SPM/SPH) ───────────────────────────
+        st.markdown(f"#### 📊 Chart 1 — Bucketed Stroke Rate ({stroke_unit})")
+        st.caption(
+            f"Actual stroke counts aggregated per "
+            f"{'minute' if stroke_unit == 'SPM' else 'hour'} — the number in each "
+            f"bucket *is* the {stroke_unit}. Stacked: blue = normal, red = stopped. "
+            f"Mirrors Vorne XL / Schuler DigiSens display style."
+        )
         rr_utils.plot_stroke_rate_chart(
             results['processed_df'],
             results.get('mode_ct'),
             stroke_unit=stroke_unit,
             show_approved_ct=show_approved_ct
         )
+
+        st.markdown("---")
+
+        # ── Chart 2: Raw CT per shot ───────────────────────────────────────────
+        st.markdown("#### 📊 Chart 2 — Raw Cycle Time per Shot (seconds)")
+        st.caption(
+            "Every individual shot plotted at its actual CT in seconds. "
+            "Green band = tolerance window used for stop detection. "
+            "This is the underlying signal all metrics are derived from."
+        )
+        rr_utils.plot_shot_bar_chart(
+            results['processed_df'],
+            results.get('lower_limit'),
+            results.get('upper_limit'),
+            results.get('mode_ct'),
+            time_agg=time_agg,
+            show_approved_ct=show_approved_ct,
+            press_mode=False,
+            stroke_unit='SPM'
+        )
+
+        st.markdown("---")
+
+        # ── Chart 3: Cumulative Strokes vs Ideal ──────────────────────────────
+        st.markdown("#### 📊 Chart 3 — Cumulative Strokes vs Ideal Production")
+        st.caption(
+            "Actual cumulative stroke count (blue) vs the ideal straight-line "
+            "projection at mode rate (green dashed). The red shaded gap represents "
+            "lost production. Standard MES / OEE production tracking view."
+        )
+        rr_utils.plot_cumulative_strokes(results['processed_df'], stroke_unit)
+
+        st.markdown("---")
+
+        # ── Chart 4: Rolling Average SPM ──────────────────────────────────────
+        st.markdown(f"#### 📊 Chart 4 — Rolling Average Stroke Rate ({stroke_unit})")
+        _roll_window = st.slider(
+            "Rolling window (periods)", 2, 30, 5,
+            key="rr_roll_window",
+            help=f"Number of {'minutes' if stroke_unit == 'SPM' else 'hours'} to average over"
+        )
+        st.caption(
+            f"Smoothed {stroke_unit} using a {_roll_window}-period rolling average. "
+            "Cuts through shot-to-shot noise to reveal genuine speed changes. "
+            "Used in Wonderware / FactoryTalk / Ignition process control displays."
+        )
+        rr_utils.plot_rolling_spm(results['processed_df'], stroke_unit, _roll_window)
+
+        st.markdown("---")
+
+        # ── Chart 5: SPC X-MR Control Chart ───────────────────────────────────
+        st.markdown("#### 📊 Chart 5 — SPC Control Chart (X-MR) on Cycle Time")
+        st.caption(
+            "Statistical Process Control — Individuals (X) chart and Moving Range (MR) "
+            "chart on CT values for normal shots. UCL/LCL at ±3σ. "
+            "Red markers = out-of-control points. "
+            "Mirrors Minitab, InfinityQS, and DataLyzer tooling validation outputs."
+        )
+        rr_utils.plot_spc_control_chart(results['processed_df'])
+
+        st.markdown("---")
+
+        # ── Chart 6: Press State Gantt ─────────────────────────────────────────
+        st.markdown("#### 📊 Chart 6 — Press State Timeline (Running vs Stopped)")
+        st.caption(
+            "Colour-coded Gantt timeline of running (blue) and stopped (red) states "
+            "per production run. Immediately reveals patterns in stop frequency and "
+            "duration across the shift. Standard view in Vorne XL, Ignition Perspective, "
+            "and Sepasoft MES."
+        )
+        rr_utils.plot_press_gantt(results['processed_df'])
+
+        st.markdown("---")
+
+        # ── Chart 7: CT Histogram ──────────────────────────────────────────────
+        st.markdown("#### 📊 Chart 7 — Cycle Time Distribution")
+        st.caption(
+            "Frequency histogram of all CT values, split into normal (blue) and "
+            "stopped (red) strokes. Vertical lines mark mode CT and tolerance limits. "
+            "Used in tooling capability studies and supplier validation — similar to "
+            "Minitab histogram with spec lines."
+        )
+        rr_utils.plot_ct_histogram(results['processed_df'])
+
+        st.markdown("---")
+
+        # ── Chart 8: SPM/SPH Heatmap ──────────────────────────────────────────
+        st.markdown(f"#### 📊 Chart 8 — Stroke Rate Heatmap ({stroke_unit}) — Hour × Day")
+        st.caption(
+            "Colour matrix showing stroke rate per hour per day. "
+            "Instantly reveals shift patterns, warm-up periods, and recurring slow hours. "
+            "Red = low rate, green = high rate. "
+            "Standard historian view in Ignition, Wonderware, and OSIsoft PI."
+        )
+        rr_utils.plot_spm_heatmap(results['processed_df'], stroke_unit)
     else:
         rr_utils.plot_shot_bar_chart(
             results['processed_df'],
