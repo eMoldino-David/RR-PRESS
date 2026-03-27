@@ -1158,6 +1158,9 @@ def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM',
     )
 
     st.plotly_chart(fig, width='stretch')
+
+
+def plot_trend_chart(df, x_col, y_col, title, x_title, y_title,
                      y_range=None, is_stability=False):
     if y_range is None:
         y_range = [0, 101]
