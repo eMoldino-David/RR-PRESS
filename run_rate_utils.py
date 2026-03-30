@@ -1408,90 +1408,114 @@ def plot_spc_control_chart(df):
 
 def plot_stoppage_pareto(df):
     """
-    Chart 6 — Stoppage Pareto (Duration × Frequency).
-    Shows which stop durations account for the most lost time.
+    Chart 6 — Stoppage Pareto (Duration x Frequency).
+    Two side-by-side simple bar charts — no dual-axis, no plotly version risk.
     """
     if df.empty:
         return
 
-    # Extract stop events and their durations
     stop_shots = df[df['stop_flag'] == 1].copy()
     if stop_shots.empty:
         st.info("No stop events found in this period.")
         return
 
-    # Group consecutive stop shots into events, measure duration per event
     stop_shots = stop_shots.sort_values('shot_time').reset_index(drop=True)
-    stop_shots['event_id'] = (stop_shots['stop_event'].cumsum()
-                              if 'stop_event' in stop_shots.columns
-                              else 0)
+    dur_col = 'adj_ct_sec' if 'adj_ct_sec' in stop_shots.columns else 'ACTUAL CT'
 
-    events = (stop_shots.groupby('event_id')
-              .agg(duration_sec=('adj_ct_sec', 'sum'),
-                   start=('shot_time', 'min'))
-              .reset_index())
+    # Assign event group: each new stop_event=True starts a new group
+    if 'stop_event' in stop_shots.columns:
+        stop_shots['_eid'] = stop_shots['stop_event'].astype(bool).astype(int).cumsum()
+    else:
+        stop_shots['_eid'] = 0
 
-    events['duration_min'] = events['duration_sec'] / 60
+    # Aggregate per stop event — use loop to avoid named-agg version issues
+    rows = []
+    for eid, grp in stop_shots.groupby('_eid'):
+        rows.append({
+            'duration_sec': float(grp[dur_col].sum()),
+            'start': grp['shot_time'].min()
+        })
+    if not rows:
+        st.info("No stop event data.")
+        return
+    events = pd.DataFrame(rows)
+    events['duration_min'] = events['duration_sec'] / 60.0
 
-    # Bucket stop durations
-    edges  = [0, 1, 2, 5, 10, 20, 60, np.inf]
-    labels = ['<1 min', '1–2 min', '2–5 min', '5–10 min',
-              '10–20 min', '20–60 min', '>60 min']
+    edges  = [0, 1, 2, 5, 10, 20, 60, 999999]
+    labels = ['<1 min', '1-2 min', '2-5 min', '5-10 min',
+              '10-20 min', '20-60 min', '>60 min']
     events['bucket'] = pd.cut(events['duration_min'], bins=edges,
                                labels=labels, right=False)
 
-    pareto = (events.groupby('bucket', observed=True)
-              .agg(count=('duration_min', 'count'),
-                   total_min=('duration_min', 'sum'))
-              .reset_index())
-    pareto = pareto[pareto['count'] > 0].copy()
-    pareto['cum_pct'] = (pareto['total_min'].cumsum()
-                         / pareto['total_min'].sum() * 100)
+    # Aggregate per bucket — also use loop to be safe
+    bucket_rows = []
+    for lbl in labels:
+        subset = events[events['bucket'] == lbl]
+        if len(subset) > 0:
+            bucket_rows.append({
+                'bucket': lbl,
+                'count': int(len(subset)),
+                'total_min': float(subset['duration_min'].sum())
+            })
+    if not bucket_rows:
+        st.info("No stop duration data to display.")
+        return
 
-    with st.expander("ℹ️ How to read this chart", expanded=False):
-        st.markdown("""
-        **What it shows:** A Pareto analysis of stop events, split by duration bucket.
-
-        **Left axis (bars):** Number of stop events in each duration category.
-
-        **Right axis (line):** Cumulative % of total downtime accounted for by stops up
-        to and including that bucket.
-
-        **How to use it:**
-        - If the line reaches 80% early (e.g. at the 2–5 min bucket), then short stops
-          are your biggest downtime driver — focus on eliminating frequent short stops.
-        - If the line is flat until a long-duration bucket, then rare but long stops
-          dominate — focus on faster recovery or root-cause elimination of major faults.
-        - Classic Pareto principle: fixing the 20% of stop types that cause 80% of
-          downtime delivers the best ROI.
-        """)
-
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-    colours = [PASTEL_COLORS['red'] if i < 2
+    pareto = pd.DataFrame(bucket_rows)
+    total_down = pareto['total_min'].sum()
+    pareto['cum_pct'] = pareto['total_min'].cumsum() / total_down * 100
+    x_vals = pareto['bucket'].tolist()
+    colours = [PASTEL_COLORS['red']    if i < 2
                else PASTEL_COLORS['orange'] if i < 4
                else PASTEL_COLORS['green']
                for i in range(len(pareto))]
-    fig.add_trace(go.Bar(
-        x=pareto['bucket'].astype(str), y=pareto['count'],
-        name='Stop Count', marker_color=colours,
-        text=pareto['count'], textposition='outside'
-    ), secondary_y=False)
-    fig.add_trace(go.Scatter(
-        x=pareto['bucket'].astype(str), y=pareto['cum_pct'],
-        mode='lines+markers+text',
-        name='Cumulative Downtime %',
-        line=dict(color='white', width=2),
-        text=[f"{v:.0f}%" for v in pareto['cum_pct']],
-        textposition='top center',
-        textfont=dict(color='white')
-    ), secondary_y=True)
-    fig.update_layout(
-        title='Stoppage Pareto — Duration × Frequency',
-        xaxis_title='Stop Duration', yaxis_title='Number of Stops',
-        yaxis2=dict(title='Cumulative Downtime %', range=[0, 110]),
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
-    )
-    st.plotly_chart(fig, width='stretch')
+
+    with st.expander("i How to read this chart", expanded=False):
+        st.markdown("""
+        **What it shows:** A Pareto analysis of stop events split by duration bucket.
+
+        **Left chart:** How many stops fell into each duration category.
+
+        **Right chart:** Cumulative % of total lost time each bucket accounts for.
+
+        **How to use it:**
+        - Short buckets dominating count + large % downtime: frequent micro-stops are
+          the main issue — misfeed, sensor, or tooling clearance.
+        - Long buckets small in count but large % downtime: infrequent but severe stops
+          dominate — focus on faster recovery and root-cause elimination.
+        """)
+
+    col1, col2 = st.columns(2)
+    with col1:
+        fig1 = go.Figure(go.Bar(
+            x=x_vals,
+            y=pareto['count'].tolist(),
+            marker_color=colours,
+            text=[str(v) for v in pareto['count'].tolist()],
+            textposition='outside'
+        ))
+        fig1.update_layout(
+            title='Stop Count by Duration',
+            xaxis_title='Stop Duration',
+            yaxis=dict(title='Number of Stop Events',
+                       range=[0, pareto['count'].max() * 1.3])
+        )
+        st.plotly_chart(fig1, use_container_width=True)
+
+    with col2:
+        fig2 = go.Figure(go.Bar(
+            x=x_vals,
+            y=pareto['cum_pct'].tolist(),
+            marker_color=colours,
+            text=[f"{v:.1f}%" for v in pareto['cum_pct'].tolist()],
+            textposition='outside'
+        ))
+        fig2.update_layout(
+            title='Cumulative % of Total Downtime',
+            xaxis_title='Stop Duration',
+            yaxis=dict(title='Cumulative Downtime %', range=[0, 120])
+        )
+        st.plotly_chart(fig2, use_container_width=True)
 
 
 def plot_interstroke_gap(df):
@@ -1707,30 +1731,30 @@ def plot_mttr_mtbf_chart(df, x_col, mttr_col, mtbf_col, shots_col, title):
         scaled_shots = ((shots - shots_min) / (shots_max - shots_min)
                         * (y_range_mtbf[1] * 0.9))
 
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
+    fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=x_axis, y=mttr, name='MTTR (min)', mode='lines+markers',
-        line=dict(color='red', width=4)
-    ), secondary_y=False)
+        line=dict(color='red', width=4), yaxis='y1'
+    ))
     fig.add_trace(go.Scatter(
         x=x_axis, y=mtbf, name='MTBF (min)', mode='lines+markers',
-        line=dict(color='green', width=4)
-    ), secondary_y=True)
+        line=dict(color='green', width=4), yaxis='y2'
+    ))
     fig.add_trace(go.Scatter(
         x=x_axis, y=scaled_shots, name='Total Shots',
         mode='lines+markers+text', text=shots, textposition='top center',
-        textfont=dict(color='blue'), line=dict(color='blue', dash='dot')
-    ), secondary_y=True)
+        textfont=dict(color='blue'), line=dict(color='blue', dash='dot'),
+        yaxis='y2'
+    ))
 
     fig.update_layout(
         title_text=title,
-        yaxis_title="MTTR (min)", yaxis2_title="MTBF (min)",
-        xaxis_title=x_col.replace("_", " ").title(),
-        yaxis=dict(range=y_range_mttr), yaxis2=dict(range=y_range_mtbf),
+        xaxis_title=x_col.replace("_", " ").title() if x_col != 'hour' else 'Hour',
+        yaxis=dict(title='MTTR (min)', side='left', range=y_range_mttr),
+        yaxis2=dict(title='MTBF (min)', side='right', overlaying='y',
+                    range=y_range_mtbf, showgrid=False),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
-    if x_col == 'hour':
-        fig.update_layout(xaxis_title="Hour")
     st.plotly_chart(fig, width='stretch')
 
 
