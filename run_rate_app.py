@@ -1397,185 +1397,219 @@ def run_run_rate_ui():
     df_all[id_col] = df_all[id_col].astype(str)
 
     # ------------------------------------------------------------------
-    # Hierarchy filter chain
-    #
-    # All filters are always shown in the sidebar.
-    # If a column is absent from the data, the filter shows "Not Available".
-    # NaN / blank values are normalised to "Not Available".
-    # Each filter cascades — options narrow based on selections above.
+    # Sidebar: Global Filters (CR-aligned)
+    # Order: Date Range → Project → Material → Part → Supplier → Plant → Tooling Type
+    # Uses get_options_multi / apply_filter pattern matching cr_CG_utils.
+    # Unknown values sort to bottom; empty selection = show all.
     # ------------------------------------------------------------------
-
-    HIERARCHY_COLS = [
-        # (internal col,   sidebar label,   session-state key)
-        ("project_id",    "Project",       "rr_f_project"),
-        ("supplier_id", "Supplier",      "rr_f_supplier"),
-        ("tooling_type",  "Tooling Type",  "rr_f_tooling_type"),
-        ("part_id",       "Part",          "rr_f_part"),
-    ]
-
-    NA_LABEL = "Not Available"
-
-    def _normalise_col(df, col):
-        """
-        Fills NaN / blank / unknown values with NA_LABEL directly on df.
-        Callers must ensure df is already a copy before calling.
-        Returns the modified df.
-        """
+    def get_options_multi(df, col):
         if col not in df.columns:
-            df[col] = NA_LABEL
-        else:
-            df[col] = (df[col].astype(str)
-                               .str.strip()
-                               .replace({"nan": NA_LABEL, "none": NA_LABEL,
-                                         "unknown": NA_LABEL, "": NA_LABEL,
-                                         "Unknown": NA_LABEL, "None": NA_LABEL}))
-        return df
+            return []
+        raw = [str(x) for x in df[col].unique()
+               if str(x).lower() not in ["nan", "none", ""]]
+        known   = sorted([x for x in raw if x.lower() != "unknown"])
+        unknown = [x for x in raw if x.lower() == "unknown"]
+        return known + unknown
 
-    def _get_opts(df, col):
-        """Sorted unique values for a column that has already been normalised."""
-        if col not in df.columns:
-            return [NA_LABEL]
-        opts = sorted(df[col].unique().tolist())
-        return opts if opts else [NA_LABEL]
+    def apply_filter(df, col, sel):
+        if not sel or col not in df.columns:
+            return df
+        sel_lower = [str(s).lower() for s in sel]
+        keep_unknown = "unknown" in sel_lower
+        mask = df[col].astype(str).isin(sel)
+        if keep_unknown:
+            mask = mask | (df[col].astype(str).str.lower() == "unknown")
+        return df[mask]
 
-    # Normalise all hierarchy columns on a working copy
-    df_filtered = df_all.copy()
-    for col, _, _ in HIERARCHY_COLS:
-        df_filtered = _normalise_col(df_filtered, col)
+    st.sidebar.markdown("### Global Filters")
 
-    st.sidebar.markdown("### Filters")
+    # 0. Date Range
+    _data_min = df_all['shot_time'].min().date() if not df_all.empty else datetime.now().date()
+    _data_max = df_all['shot_time'].max().date() if not df_all.empty else datetime.now().date()
+    _range = st.sidebar.date_input(
+        "Date Range", value=[_data_min, _data_max],
+        min_value=_data_min, max_value=_data_max,
+        key="rr_global_date_range"
+    )
+    if isinstance(_range, (list, tuple)) and len(_range) == 2:
+        start_d, end_d = _range
+        df_all = df_all[
+            (df_all['shot_time'].dt.date >= start_d) &
+            (df_all['shot_time'].dt.date <= end_d)
+        ]
+    else:
+        st.sidebar.warning("Please select both a start and end date.")
+        st.stop()
 
-    for col, label, key in HIERARCHY_COLS:
-        opts = _get_opts(df_filtered, col)
+    if df_all.empty:
+        st.sidebar.warning("No data for the selected date range.")
+        st.stop()
 
-        # If the only option is the placeholder, show it disabled-looking
-        # but don't let it block the filter chain
-        if opts == [NA_LABEL]:
-            st.sidebar.multiselect(label, [NA_LABEL], default=[NA_LABEL],
-                                   key=key, disabled=True)
-            continue
+    # 1–6. Cascading hierarchy filters
+    opts_proj = get_options_multi(df_all, 'project_id')
+    sel_proj  = st.sidebar.multiselect("Project",      opts_proj, default=opts_proj, key="rr_f_project")
+    df_f1     = apply_filter(df_all, 'project_id', sel_proj)
 
-        sel = st.sidebar.multiselect(label, opts, default=opts, key=key)
+    opts_mat  = get_options_multi(df_f1, 'material')
+    sel_mat   = st.sidebar.multiselect("Material",     opts_mat,  default=opts_mat,  key="rr_f_material")
+    df_f2     = apply_filter(df_f1, 'material', sel_mat)
 
-        # Apply selection — if nothing selected default to all (avoids empty df)
-        active = sel if sel else opts
-        df_filtered = df_filtered[df_filtered[col].isin(active)]
+    opts_part = get_options_multi(df_f2, 'part_id')
+    sel_part  = st.sidebar.multiselect("Part",         opts_part, default=opts_part, key="rr_f_part")
+    df_f3     = apply_filter(df_f2, 'part_id', sel_part)
+
+    opts_sup  = get_options_multi(df_f3, 'supplier_id')
+    sel_sup   = st.sidebar.multiselect("Supplier",     opts_sup,  default=opts_sup,  key="rr_f_supplier")
+    df_f4     = apply_filter(df_f3, 'supplier_id', sel_sup)
+
+    opts_plt  = get_options_multi(df_f4, 'plant_id')
+    sel_plt   = st.sidebar.multiselect("Plant",        opts_plt,  default=opts_plt,  key="rr_f_plant")
+    df_f5     = apply_filter(df_f4, 'plant_id', sel_plt)
+
+    opts_tt   = get_options_multi(df_f5, 'tooling_type')
+    sel_tt    = st.sidebar.multiselect("Tooling Type", opts_tt,   default=opts_tt,   key="rr_f_tooling_type")
+    df_filtered = apply_filter(df_f5, 'tooling_type', sel_tt)
 
     if df_filtered.empty:
         st.sidebar.warning("No data matches the current filters.")
         st.stop()
 
     # ------------------------------------------------------------------
-    # Tool selection — always visible, cascades from filters above.
-    # Multiselect narrows the pool shown in the dashboard selectbox below.
+    # Analysis parameters (sidebar)
     # ------------------------------------------------------------------
-    available_tool_ids = sorted(df_filtered[id_col].unique().tolist())
-    if not available_tool_ids:
-        st.sidebar.warning("No tools found for this filter selection.")
-        st.stop()
-
-    sel_tools = st.sidebar.multiselect(
-        "Tooling", available_tool_ids, default=available_tool_ids,
-        key="rr_f_tool"
-    )
-    active_tools = sel_tools if sel_tools else available_tool_ids
-    df_filtered = df_filtered[df_filtered[id_col].isin(active_tools)]
-
-    if df_filtered.empty:
-        st.sidebar.warning("No data for the selected tooling.")
-        st.stop()
-
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### Dashboard View")
-
-    dashboard_tool_ids_available = sorted(df_filtered[id_col].unique().tolist())
-    tool_options = ["All Tools (Risk Tower)"] + dashboard_tool_ids_available
-    dashboard_tool_id_selection = st.sidebar.selectbox(
-        "Select Tool for Dashboard & Trends",
-        tool_options,
-        key="rr_tool_select"
-    )
-
-    # ------------------------------------------------------------------
-    # Analysis parameters
-    # ------------------------------------------------------------------
     st.sidebar.markdown("### Analysis Parameters ⚙️")
     with st.sidebar.expander("Configure Metrics", expanded=True):
         tolerance = st.slider(
-            "Tolerance Band (% of Mode CT)", 0.01, 0.50, 0.05, 0.01,
+            "Tolerance Band", 0.01, 0.50, 0.05, 0.01,
             key="rr_tolerance",
-            help="Defines the ±% around Mode CT."
+            help="±% around Mode CT used to classify normal vs stopped shots."
         )
         downtime_gap_tolerance = st.slider(
-            "Downtime Gap Tolerance (sec)", 0.0, 5.0, 2.0, 0.5,
+            "Downtime Gap (sec)", 0.0, 5.0, 2.0, 0.5,
             key="rr_downtime_gap",
             help="Minimum idle time between shots to be considered a stop."
         )
         run_interval_hours = st.slider(
-            "Run Interval Threshold (hours)", 1, 24, 8, 1,
+            "Run Interval (hours)", 1, 24, 8, 1,
             key="rr_run_interval",
             help="Max hours between shots before a new Production Run is identified."
         )
-
         enable_min_shots = st.checkbox(
             "Filter Small Production Runs", value=False, key="rr_filter_enable"
         )
         min_shots_filter = (
-            st.slider(
-                "Min Shots per Run Filter", 1, 500, 10, 1,
-                key="rr_min_shots_global",
-                help="Runs with fewer shots than this will be excluded."
-            )
+            st.slider("Min Shots per Run", 1, 500, 10, 1, key="rr_min_shots_global")
             if enable_min_shots else 1
         )
-
         show_approved_ct = st.checkbox(
             "Show Approved CT", value=False, key="rr_show_approved_ct",
-            help="Displays the APPROVED_CT column in analysis tables and metrics."
+            help="Displays the Approved CT column in tables and metrics."
         )
 
     # ------------------------------------------------------------------
-    # Resolve the data slice for the dashboard tabs
+    # In-page tool selector (CR-aligned)
+    # Sidebar is global scope. Tool selection lives in-page so it is
+    # visible, contextual, and doesn't compete with filters for space.
     # ------------------------------------------------------------------
-    if dashboard_tool_id_selection == "All Tools (Risk Tower)":
-        # Show Risk Tower in tab1. Dashboard and Trends need a specific tool.
-        df_for_dashboard = pd.DataFrame()
-        tool_id_for_dashboard_display = "No Tool Selected"
-    else:
-        df_for_dashboard = df_filtered[
-            df_filtered[id_col] == dashboard_tool_id_selection
-        ]
-        tool_id_for_dashboard_display = dashboard_tool_id_selection
+    tool_ids = sorted([
+        str(x) for x in df_filtered[id_col].unique()
+        if str(x).lower() not in ["nan", "unknown", "none"]
+    ])
+
+    if not tool_ids:
+        st.warning("No tools found for the current filter scope.")
+        st.stop()
+
+    st.markdown("### Tool Selection")
+    st.caption(
+        f"{len(tool_ids)} tool{'s' if len(tool_ids) != 1 else ''} in current filter scope. "
+        "Risk Tower uses all tools. Dashboard & Trends use the selection below."
+    )
+
+    col_sel, col_mode = st.columns([3, 1])
+    with col_sel:
+        selected_tools = st.multiselect(
+            "Select tool(s) for Dashboard & Trends",
+            options=tool_ids,
+            default=tool_ids[:1] if tool_ids else [],
+            key="rr_tool_select_inline"
+        )
+    with col_mode:
+        if len(selected_tools) >= 2:
+            view_mode = st.radio(
+                "View mode", ["Rolled-Up", "Side-by-Side"],
+                horizontal=True, key="rr_view_mode_inline"
+            )
+            if view_mode == "Side-by-Side" and len(selected_tools) > 5:
+                st.caption("⚠️ Side-by-Side limited to 5 tools.")
+                selected_tools = selected_tools[:5]
+        else:
+            view_mode = "Rolled-Up"
+
+    st.markdown("---")
+
+    if not selected_tools:
+        st.info("Select at least one tool above to begin analysis.")
+        st.stop()
+
+    df_tool_scope = df_filtered[df_filtered[id_col].isin(selected_tools)]
+    tool_name_display = (selected_tools[0] if len(selected_tools) == 1
+                         else f"{len(selected_tools)} tools: {', '.join(selected_tools)}")
+
+    # ------------------------------------------------------------------
+    # Helper: render side-by-side columns
+    # ------------------------------------------------------------------
+    def _render_side_by_side(render_fn, *args, **kwargs):
+        cols = st.columns(len(selected_tools))
+        for i, t_id in enumerate(selected_tools):
+            with cols[i]:
+                st.markdown(
+                    f"<h3 style='text-align:center;color:#3498DB;'>Tool: {t_id}</h3>",
+                    unsafe_allow_html=True
+                )
+                t_df = df_tool_scope[df_tool_scope[id_col] == t_id]
+                if not t_df.empty:
+                    render_fn(t_df, t_id, *args, **kwargs)
+                else:
+                    st.warning(f"No data for {t_id}")
 
     # ------------------------------------------------------------------
     # Tabs
-    # Risk Tower always uses the full filter-scoped dataset (df_filtered)
-    # so it shows all matched tools, not just the selected one.
     # ------------------------------------------------------------------
     tab1, tab2, tab3 = st.tabs(["Risk Tower", "Run Rate Dashboard", "Trends"])
 
     with tab1:
-        render_risk_tower(df_filtered, run_interval_hours, min_shots_filter, tolerance, downtime_gap_tolerance)
+        render_risk_tower(df_filtered, run_interval_hours, min_shots_filter,
+                          tolerance, downtime_gap_tolerance)
 
     with tab2:
-        if not df_for_dashboard.empty:
-            render_dashboard(
-                df_for_dashboard, tool_id_for_dashboard_display,
+        if view_mode == "Side-by-Side":
+            _render_side_by_side(
+                render_dashboard,
                 tolerance, downtime_gap_tolerance, run_interval_hours,
                 show_approved_ct, min_shots_filter
             )
         else:
-            st.info("👈 Select a specific tool from the **Dashboard View** dropdown in the sidebar to view its dashboard.")
+            render_dashboard(
+                df_tool_scope, tool_name_display,
+                tolerance, downtime_gap_tolerance, run_interval_hours,
+                show_approved_ct, min_shots_filter
+            )
 
     with tab3:
-        if not df_for_dashboard.empty:
-            render_trends_tab(
-                df_for_dashboard, tolerance, downtime_gap_tolerance,
-                run_interval_hours, min_shots_filter,
-                tool_id_selection=tool_id_for_dashboard_display
+        if view_mode == "Side-by-Side":
+            _render_side_by_side(
+                render_trends_tab,
+                tolerance, downtime_gap_tolerance,
+                run_interval_hours, min_shots_filter
             )
         else:
-            st.info("👈 Select a specific tool from the **Dashboard View** dropdown in the sidebar to view trends.")
+            render_trends_tab(
+                df_tool_scope, tolerance, downtime_gap_tolerance,
+                run_interval_hours, min_shots_filter,
+                tool_id_selection=tool_name_display
+            )
 
 
 if __name__ == "__main__":
