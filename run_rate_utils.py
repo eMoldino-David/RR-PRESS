@@ -1016,8 +1016,8 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
     _stop_label   = "Stopped Stroke" if press_mode else "Stopped Shot"
     _app_label    = "Approved SPM" if press_mode else "Approved CT"
 
-    # 50% of mode CT in ms — visible when zoomed, not overwhelming at full scale
-    _bar_w = (int(mode_ct * 500) if isinstance(mode_ct, (int, float)) and mode_ct > 0
+    # 80% of mode CT in ms — wide enough to hover/tooltip easily
+    _bar_w = (int(mode_ct * 800) if isinstance(mode_ct, (int, float)) and mode_ct > 0
               else None)
 
     fig = go.Figure()
