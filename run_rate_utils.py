@@ -1021,11 +1021,14 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
     # annotation dict, which breaks in Plotly 6.6 for datetime x values)
     if 'run_id' in df.columns:
         run_starts = df.groupby('run_id')['shot_time'].min().sort_values()
+        view_start = df['shot_time'].min()
         label_map = {}
         if 'run_label' in df.columns:
             label_map = df.drop_duplicates('run_id').set_index('run_id')['run_label'].to_dict()
         for i, (run_id, start_time) in enumerate(run_starts.items()):
-            if i == 0:
+            # Skip only if this run started before the visible window
+            # (i.e. it spills in from a previous period — no boundary line to draw)
+            if i == 0 and start_time <= view_start:
                 continue
             lbl = label_map.get(run_id, f'Run {i + 1}')
             x_str = str(start_time)
@@ -1170,11 +1173,12 @@ def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM', show_approved_ct=Fals
     # Run boundary labels — add_shape + add_annotation (Plotly 6.6 safe)
     if run_col:
         run_starts = df.groupby(run_col)['shot_time'].min().sort_values()
+        view_start = df['shot_time'].min()
         label_map = {}
         if 'run_label' in df.columns:
             label_map = df.drop_duplicates(run_col).set_index(run_col)['run_label'].to_dict()
         for i, (run_id, start_time) in enumerate(run_starts.items()):
-            if i == 0:
+            if i == 0 and start_time <= view_start:
                 continue
             lbl = label_map.get(run_id, f'Run {i + 1}')
             x_str = str(pd.Timestamp(start_time).floor(freq))
