@@ -709,7 +709,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         c1, c2 = st.columns(2)
         c1.plotly_chart(
             rr_utils.create_gauge(
-                summary_metrics.get('efficiency', 0) * 100, "Run Rate Efficiency (%)"
+                summary_metrics.get('efficiency', 0) * 100, "Run Rate Shot Efficiency (%)"
             ),
             width='stretch'
         )
@@ -721,18 +721,18 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         c2.plotly_chart(
             rr_utils.create_gauge(
                 summary_metrics.get('stability_index', 0),
-                "Run Rate Stability Index (%)", steps=steps
+                "Run Rate Time Stability (%)", steps=steps
             ),
             width='stretch'
         )
 
     with st.expander("ℹ️ What do these metrics mean?"):
         st.markdown("""
-        **Run Rate Efficiency (%)**
+        **Run Rate Shot Efficiency (%)**
         > Percentage of shots that were 'Normal' (stop_flag = 0).
         > - *Formula: Normal Shots / Total Shots*
 
-        **Run Rate Stability Index (%)**
+        **Run Rate Time Stability (%)**
         > Percentage of total run time spent in normal production.
         > - *Formula: Total Production Time / Total Run Duration*
 
