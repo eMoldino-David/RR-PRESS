@@ -706,7 +706,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         st.download_button(
             label="📥 Export Run-Based Report",
             data=rr_utils.prepare_and_generate_run_based_excel(
-                df_processed.copy(), tolerance, downtime_gap_tolerance,
+                df_view.copy(), tolerance, downtime_gap_tolerance,
                 run_interval_hours, tool_id_selection
             ),
             file_name=(
