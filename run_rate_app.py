@@ -596,16 +596,16 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         summary_metrics['min_mode_ct'] = 0
         summary_metrics['max_mode_ct'] = 0
 
-    if 'lower_limit' in df_view.columns:
-        summary_metrics['min_lower_limit'] = df_view['lower_limit'].min()
-        summary_metrics['max_lower_limit'] = df_view['lower_limit'].max()
+    if 'mode_lower' in df_view.columns:
+        summary_metrics['min_lower_limit'] = df_view['mode_lower'].min()
+        summary_metrics['max_lower_limit'] = df_view['mode_lower'].max()
     else:
         summary_metrics['min_lower_limit'] = 0
         summary_metrics['max_lower_limit'] = 0
 
-    if 'upper_limit' in df_view.columns:
-        summary_metrics['min_upper_limit'] = df_view['upper_limit'].min()
-        summary_metrics['max_upper_limit'] = df_view['upper_limit'].max()
+    if 'mode_upper' in df_view.columns:
+        summary_metrics['min_upper_limit'] = df_view['mode_upper'].min()
+        summary_metrics['max_upper_limit'] = df_view['mode_upper'].max()
     else:
         summary_metrics['min_upper_limit'] = 0
         summary_metrics['max_upper_limit'] = 0
@@ -940,7 +940,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             """)
         rr_utils.plot_shot_bar_chart(
             results['processed_df'],
-            results.get('lower_limit'), results.get('upper_limit'),
+            results.get('mode_lower'), results.get('mode_upper'),
             results.get('mode_ct'), time_agg=time_agg,
             show_approved_ct=show_approved_ct, press_mode=False, stroke_unit=_chart_su
         )
@@ -948,8 +948,8 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
     else:
         rr_utils.plot_shot_bar_chart(
             results['processed_df'],
-            results.get('lower_limit'),
-            results.get('upper_limit'),
+            results.get('mode_lower'),
+            results.get('mode_upper'),
             results.get('mode_ct'),
             time_agg=time_agg,
             show_approved_ct=show_approved_ct,
@@ -972,7 +972,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         # Hierarchy columns (if present in data)
         for _col, _lbl in [
             ('tool_id',       'Tooling ID'),
-            ('supplier_name', 'Supplier'),
+            ('supplier_id', 'Supplier'),
             ('tooling_type',  'Tooling Type'),
             ('part_id',       'Part(s)'),
         ]:
@@ -986,11 +986,11 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             _shot_names['run_label'] = 'Run ID'
 
         # Core shot columns
-        _shot_cols  += ['shot_time', 'mode_ct', 'ACTUAL CT', 'adj_ct_sec']
+        _shot_cols  += ['shot_time', 'mode_ct', 'actual_ct', 'adj_ct_sec']
         _shot_names.update({
             'shot_time':  'Date / Time',
             'mode_ct':    'Mode CT (sec)',
-            'ACTUAL CT':  'Actual CT (sec)',
+            'actual_ct':  'Actual CT (sec)',
             'adj_ct_sec': 'Adjusted CT (sec)',
         })
 
@@ -1119,8 +1119,8 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
 
                 col_rename = {
                     'run_label': 'RUN ID', 'mode_ct': 'Mode CT (sec)',
-                    'lower_limit': 'Lower Limit (sec)',
-                    'upper_limit': 'Upper Limit (sec)',
+                    'mode_lower': 'Lower Limit (sec)',
+                    'mode_upper': 'Upper Limit (sec)',
                     'mttr_min': 'MTTR (min)', 'mtbf_min': 'MTBF (min)',
                     'stability_index': 'Stability (%)', 'stops': 'STOPS',
                     'MTTR (min)': 'MTTR (min)', 'MTBF (min)': 'MTBF (min)',
@@ -1413,7 +1413,7 @@ def run_run_rate_ui():
     HIERARCHY_COLS = [
         # (internal col,   sidebar label,   session-state key)
         ("project_id",    "Project",       "rr_f_project"),
-        ("supplier_name", "Supplier",      "rr_f_supplier"),
+        ("supplier_id", "Supplier",      "rr_f_supplier"),
         ("tooling_type",  "Tooling Type",  "rr_f_tooling_type"),
         ("part_id",       "Part",          "rr_f_part"),
     ]

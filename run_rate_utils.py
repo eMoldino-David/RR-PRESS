@@ -168,7 +168,7 @@ def load_all_data(files, _cache_version=None):
                 "ACTUAL CT", "ACTUAL_CT", "CYCLE TIME"
             )
             if actual_ct_col:
-                df.rename(columns={actual_ct_col: "ACTUAL CT"}, inplace=True)
+                df.rename(columns={actual_ct_col: "actual_ct"}, inplace=True)
 
             # ------------------------------------------------------------------
             # Approved cycle time
@@ -238,17 +238,26 @@ def load_all_data(files, _cache_version=None):
             # Only ingested when present — absence is handled gracefully by
             # the has_hierarchy detection in the app sidebar.
             #
-            # DB column       internal name    filter label
-            # SUPPLIER_NAME → supplier_name    Supplier
+            # DB column       internal name    filter label      (aligns with cr_CG_utils)
+            # SUPPLIER_ID   → supplier_id    Supplier
+            # PLANT_ID      → plant_id         Plant
+            # MATERIAL      → material          Material
             # PART_ID       → part_id          Part
             # PART_NAME     → part_name        (display alongside part_id)
             # TOOLING_TYPE  → tooling_type     Tooling Type
-            # PROJECT /
-            #  PROJECT_ID   → project_id       Project (if present)
+            # PROJECT_ID    → project_id       Project
             # ------------------------------------------------------------------
-            supplier_col = get_col("SUPPLIER_NAME", "SUPPLIER NAME", "SUPPLIER")
-            if supplier_col and supplier_col != "supplier_name":
-                df.rename(columns={supplier_col: "supplier_name"}, inplace=True)
+            supplier_col = get_col("SUPPLIER_ID", "SUPPLIER_NAME", "SUPPLIER NAME", "SUPPLIER")
+            if supplier_col and supplier_col != "supplier_id":
+                df.rename(columns={supplier_col: "supplier_id"}, inplace=True)
+
+            plant_col = get_col("PLANT_ID", "PLANT", "FACTORY")
+            if plant_col and plant_col != "plant_id":
+                df.rename(columns={plant_col: "plant_id"}, inplace=True)
+
+            material_col = get_col("MATERIAL", "MAT", "RESIN")
+            if material_col and material_col != "material":
+                df.rename(columns={material_col: "material"}, inplace=True)
 
             part_id_col = get_col("PART_ID", "PART")
             if part_id_col and part_id_col != "part_id":
@@ -334,7 +343,7 @@ class RunRateCalculator:
         hourly_total_downtime_sec = hourly_groups.apply(
             lambda x: x[x['stop_flag'] == 1]['adj_ct_sec'].sum()
         )
-        uptime_min = df[df['stop_flag'] == 0].groupby('hour')['ACTUAL CT'].sum() / 60
+        uptime_min = df[df['stop_flag'] == 0].groupby('hour')['actual_ct'].sum() / 60
         shots = hourly_groups.size().rename('total_shots')
 
         hourly_summary = pd.DataFrame(index=range(24))
@@ -371,7 +380,7 @@ class RunRateCalculator:
             hourly_summary = hourly_summary.join(hourly_approved.rename('approved_ct'))
 
         if 'mode_ct' in df.columns:
-            hourly_mode = hourly_groups['ACTUAL CT'].apply(_get_stable_mode)
+            hourly_mode = hourly_groups['actual_ct'].apply(_get_stable_mode)
             hourly_summary = hourly_summary.join(hourly_mode.rename('mode_ct'))
 
         cols_to_fill = [col for col in hourly_summary.columns
@@ -393,11 +402,11 @@ class RunRateCalculator:
             return {}
 
         # 1. Base prep — deterministic sort (Tool → Time → CT)
-        if 'ACTUAL CT' not in df.columns:
-            df['ACTUAL CT'] = np.nan
-        df['ACTUAL CT'] = pd.to_numeric(df['ACTUAL CT'], errors='coerce')
-        df = (df.dropna(subset=['shot_time', 'ACTUAL CT'])
-                .sort_values(['tool_id', 'shot_time', 'ACTUAL CT'])
+        if 'actual_ct' not in df.columns:
+            df['actual_ct'] = np.nan
+        df['actual_ct'] = pd.to_numeric(df['actual_ct'], errors='coerce')
+        df = (df.dropna(subset=['shot_time', 'actual_ct'])
+                .sort_values(['tool_id', 'shot_time', 'actual_ct'])
                 .reset_index(drop=True))
         if df.empty:
             return {}
@@ -406,21 +415,21 @@ class RunRateCalculator:
         df['time_diff_sec'] = (df.groupby('tool_id')['shot_time']
                                .diff().dt.total_seconds().fillna(0))
         mask_first_shot = df['tool_id'] != df['tool_id'].shift(1)
-        df.loc[mask_first_shot, 'time_diff_sec'] = df.loc[mask_first_shot, 'ACTUAL CT']
+        df.loc[mask_first_shot, 'time_diff_sec'] = df.loc[mask_first_shot, 'actual_ct']
 
         # 3. Run grouping
         is_new_run = df['time_diff_sec'] > (self.run_interval_hours * 3600)
         df['run_id'] = (is_new_run | mask_first_shot).cumsum()
 
         # 4. Mode CT per run — rounded for float stability (FIX: single authoritative source)
-        run_modes = (df[df['ACTUAL CT'] < 1000]
-                     .groupby('run_id')['ACTUAL CT']
+        run_modes = (df[df['actual_ct'] < 1000]
+                     .groupby('run_id')['actual_ct']
                      .apply(_get_stable_mode))
         df['mode_ct'] = df['run_id'].map(run_modes)
-        df['mode_ct'] = df['mode_ct'].fillna(df['ACTUAL CT'].median())
+        df['mode_ct'] = df['mode_ct'].fillna(df['actual_ct'].median())
 
-        df['lower_limit'] = df['mode_ct'] * (1 - self.tolerance)
-        df['upper_limit'] = df['mode_ct'] * (1 + self.tolerance)
+        df['mode_lower'] = df['mode_ct'] * (1 - self.tolerance)
+        df['mode_upper'] = df['mode_ct'] * (1 + self.tolerance)
 
         # Display value — single value if all runs share one mode, else "Varies by Run"
         modes_unique = df['mode_ct'].dropna().unique()
@@ -439,9 +448,9 @@ class RunRateCalculator:
 
         # 5. Stop detection
         df['next_shot_time_diff'] = df.groupby('tool_id')['time_diff_sec'].shift(-1).fillna(0)
-        is_time_gap = df['next_shot_time_diff'] > (df['ACTUAL CT'] + self.downtime_gap_tolerance)
-        is_abnormal = (df['ACTUAL CT'] < df['lower_limit']) | (df['ACTUAL CT'] > df['upper_limit'])
-        is_hard_stop = df['ACTUAL CT'] >= 999.9
+        is_time_gap = df['next_shot_time_diff'] > (df['actual_ct'] + self.downtime_gap_tolerance)
+        is_abnormal = (df['actual_ct'] < df['mode_lower']) | (df['actual_ct'] > df['mode_upper'])
+        is_hard_stop = df['actual_ct'] >= 999.9
 
         df['stop_flag'] = np.where(is_time_gap | is_abnormal | is_hard_stop, 1, 0)
         # Reset stop_flag for first shots and new-run shots so that minor warm-up
@@ -449,12 +458,12 @@ class RunRateCalculator:
         # Guard: only forgive shots whose CT is within 5× the run's mode CT.
         # A shot at e.g. 17× mode CT (machine idle for days) is genuine downtime
         # and must remain flagged regardless of where it falls in the run sequence.
-        startup_ct_ok = df['ACTUAL CT'] < (df['mode_ct'] * 5)
+        startup_ct_ok = df['actual_ct'] < (df['mode_ct'] * 5)
         df.loc[(mask_first_shot | is_new_run) & startup_ct_ok, 'stop_flag'] = 0
         df['prev_stop_flag'] = df.groupby('tool_id')['stop_flag'].shift(1, fill_value=0)
         df['stop_event'] = (df['stop_flag'] == 1) & (df['prev_stop_flag'] == 0)
 
-        df['adj_ct_sec'] = df['ACTUAL CT']
+        df['adj_ct_sec'] = df['actual_ct']
         df.loc[is_time_gap, 'adj_ct_sec'] = df['next_shot_time_diff']
 
         # 6. Run-exact time summation
@@ -463,12 +472,12 @@ class RunRateCalculator:
             if not run_df.empty:
                 start = run_df['shot_time'].min()
                 end = run_df['shot_time'].max()
-                last_ct = run_df.iloc[-1]['ACTUAL CT']
+                last_ct = run_df.iloc[-1]['actual_ct']
                 run_durations_sec.append((end - start).total_seconds() + last_ct)
 
         total_runtime_sec = sum(run_durations_sec)
         prod_df = df[df['stop_flag'] == 0]
-        production_time_sec = prod_df['ACTUAL CT'].sum()
+        production_time_sec = prod_df['actual_ct'].sum()
         downtime_sec = max(0, total_runtime_sec - production_time_sec)
 
         total_shots = len(df)
@@ -496,7 +505,7 @@ class RunRateCalculator:
         df["run_group"] = df["stop_event"].cumsum()
         df_for_runs = df[df['adj_ct_sec'] <= 28800].copy()
         run_durations = (df_for_runs[df_for_runs["stop_flag"] == 0]
-                         .groupby("run_group")["ACTUAL CT"]
+                         .groupby("run_group")["actual_ct"]
                          .sum().div(60)
                          .reset_index(name="duration_min"))
 
@@ -563,14 +572,14 @@ class RunRateCalculator:
             "production_run_sec": total_runtime_sec,
             "tot_down_time_sec": downtime_sec,
             "approved_ct": approved_ct_display,
-            "lower_limit": (df['lower_limit'].min()
+            "mode_lower": (df['mode_lower'].min()
                             if not df.empty else 0),
-            "upper_limit": (df['upper_limit'].max()
+            "mode_upper": (df['mode_upper'].max()
                             if not df.empty else 0),
-            "min_lower_limit": df['lower_limit'].min() if not df.empty else 0,
-            "max_lower_limit": df['lower_limit'].max() if not df.empty else 0,
-            "min_upper_limit": df['upper_limit'].min() if not df.empty else 0,
-            "max_upper_limit": df['upper_limit'].max() if not df.empty else 0,
+            "min_lower_limit": df['mode_lower'].min() if not df.empty else 0,
+            "max_lower_limit": df['mode_lower'].max() if not df.empty else 0,
+            "min_upper_limit": df['mode_upper'].min() if not df.empty else 0,
+            "max_upper_limit": df['mode_upper'].max() if not df.empty else 0,
             "min_mode_ct": (df['mode_ct'].min()
                             if not df.empty and pd.notna(df['mode_ct'].min()) else 0),
             "max_mode_ct": (df['mode_ct'].max()
@@ -592,11 +601,11 @@ def _run_metrics_from_processed(df_slice: pd.DataFrame) -> dict:
         return {}
     start = df_slice['shot_time'].min()
     end = df_slice['shot_time'].max()
-    last_ct = df_slice.iloc[-1]['ACTUAL CT']
+    last_ct = df_slice.iloc[-1]['actual_ct']
     duration = (end - start).total_seconds() + last_ct
 
     prod_df = df_slice[df_slice['stop_flag'] == 0]
-    prod_sec = prod_df['ACTUAL CT'].sum()
+    prod_sec = prod_df['actual_ct'].sum()
     down_sec = max(0, duration - prod_sec)
     tot_stops = df_slice['stop_event'].sum()
     tot_shots = len(df_slice)
@@ -609,7 +618,7 @@ def _run_metrics_from_processed(df_slice: pd.DataFrame) -> dict:
     if 'mode_ct' in df_slice.columns and not df_slice['mode_ct'].dropna().empty:
         mode_ct = float(df_slice['mode_ct'].iloc[0])
     else:
-        mode_ct = _get_stable_mode(df_slice['ACTUAL CT']) if tot_shots > 0 else np.nan
+        mode_ct = _get_stable_mode(df_slice['actual_ct']) if tot_shots > 0 else np.nan
     approved_ct = (df_slice['approved_ct'].mode().iloc[0]
                    if 'approved_ct' in df_slice.columns
                    and not df_slice['approved_ct'].dropna().empty
@@ -718,11 +727,11 @@ def build_display_results(df: pd.DataFrame, run_interval_hours: float = 8) -> di
         return {}
 
     # --- run_durations for bucket analysis ---
-    col = 'adj_ct_sec' if 'adj_ct_sec' in df.columns else 'ACTUAL CT'
+    col = 'adj_ct_sec' if 'adj_ct_sec' in df.columns else 'actual_ct'
     df_for_runs = df[df[col] <= 28800].copy()
     run_durations = (
         df_for_runs[df_for_runs["stop_flag"] == 0]
-        .groupby("run_group")["ACTUAL CT"]
+        .groupby("run_group")["actual_ct"]
         .sum().div(60)
         .reset_index(name="duration_min")
     )
@@ -775,8 +784,8 @@ def build_display_results(df: pd.DataFrame, run_interval_hours: float = 8) -> di
     else:
         mode_ct_display = 0
 
-    lower_limit = df['lower_limit'].min() if 'lower_limit' in df.columns else 0
-    upper_limit = df['upper_limit'].max() if 'upper_limit' in df.columns else 0
+    lower_limit = df['mode_lower'].min() if 'mode_lower' in df.columns else 0
+    upper_limit = df['mode_upper'].max() if 'mode_upper' in df.columns else 0
 
     # --- hourly summary ---
     # Use a temporary RunRateCalculator instance solely to call _calculate_hourly_summary,
@@ -790,8 +799,8 @@ def build_display_results(df: pd.DataFrame, run_interval_hours: float = 8) -> di
         "bucket_labels": labels,
         "bucket_color_map": bucket_color_map,
         "mode_ct": mode_ct_display,
-        "lower_limit": lower_limit,
-        "upper_limit": upper_limit,
+        "mode_lower": lower_limit,
+        "mode_upper": upper_limit,
         "hourly_summary": hourly_summary,
     }
 
@@ -825,8 +834,8 @@ def calculate_run_summaries(df_period, tolerance, downtime_gap_tolerance,
         m = _run_metrics_from_processed(df_run)
 
         # Per-run limits from the pre-computed columns (set during mode_ct assignment)
-        lower_limit = df_run['lower_limit'].iloc[0] if 'lower_limit' in df_run.columns else 0
-        upper_limit = df_run['upper_limit'].iloc[0] if 'upper_limit' in df_run.columns else 0
+        lower_limit = df_run['mode_lower'].iloc[0] if 'mode_lower' in df_run.columns else 0
+        upper_limit = df_run['mode_upper'].iloc[0] if 'mode_upper' in df_run.columns else 0
 
         run_summary_list.append({
             'run_id': run_id_val,
@@ -837,8 +846,8 @@ def calculate_run_summaries(df_period, tolerance, downtime_gap_tolerance,
             'normal_shots': m['normal_shots'],
             'stopped_shots': m['tot_shots'] - m['normal_shots'],
             'mode_ct': m['mode_ct'],       # FIX: computed via _get_stable_mode
-            'lower_limit': lower_limit,
-            'upper_limit': upper_limit,
+            'mode_lower': lower_limit,
+            'mode_upper': upper_limit,
             'total_runtime_sec': m['duration'],
             'production_time_sec': m['prod_sec'],
             'downtime_sec': m['down_sec'],
@@ -918,7 +927,7 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
 
     df['color'] = np.where(df['stop_flag'] == 1, PASTEL_COLORS['red'], '#3498DB')
 
-    downtime_gap_indices = df[df['adj_ct_sec'] != df['ACTUAL CT']].index
+    downtime_gap_indices = df[df['adj_ct_sec'] != df['actual_ct']].index
     valid_downtime_gap_indices = downtime_gap_indices[downtime_gap_indices > 0]
     normal_shot_indices = df.index.difference(valid_downtime_gap_indices)
 
@@ -973,13 +982,13 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
         ))
 
     # Tolerance band — convert limits to stroke rate when in press mode
-    if 'lower_limit' in df.columns and 'run_id' in df.columns:
+    if 'mode_lower' in df.columns and 'run_id' in df.columns:
         for run_id_val, group in df.groupby('run_id'):
             if not group.empty:
-                band_lo = (ct_to_stroke_rate(group['upper_limit'].iloc[0], stroke_unit) if press_mode
-                           else group['lower_limit'].iloc[0])
-                band_hi = (ct_to_stroke_rate(group['lower_limit'].iloc[0], stroke_unit) if press_mode
-                           else group['upper_limit'].iloc[0])
+                band_lo = (ct_to_stroke_rate(group['mode_upper'].iloc[0], stroke_unit) if press_mode
+                           else group['mode_lower'].iloc[0])
+                band_hi = (ct_to_stroke_rate(group['mode_lower'].iloc[0], stroke_unit) if press_mode
+                           else group['mode_upper'].iloc[0])
                 fig.add_shape(
                     type="rect", xref="x", yref="y",
                     x0=group['shot_time'].min(), y0=band_lo,
@@ -1333,24 +1342,24 @@ def plot_ct_histogram(df):
     if df.empty:
         return
 
-    all_cts  = df['ACTUAL CT'].dropna()
-    has_lims = 'lower_limit' in df.columns and 'upper_limit' in df.columns
+    all_cts  = df['actual_ct'].dropna()
+    has_lims = 'mode_lower' in df.columns and 'mode_upper' in df.columns
 
     if 'run_id' in df.columns and 'mode_ct' in df.columns:
         run_modes = df.groupby('run_id')['mode_ct'].first().dropna()
     else:
         run_modes = pd.Series([_get_stable_mode(
-            df[df['stop_flag'] == 0]['ACTUAL CT'].dropna())])
+            df[df['stop_flag'] == 0]['actual_ct'].dropna())])
 
     mode_min = float(run_modes.min())
     mode_max = float(run_modes.max())
     multi_run = (mode_max - mode_min) > 0.05
 
     if has_lims:
-        lower_min = float(df['lower_limit'].min())
-        upper_max = float(df['upper_limit'].max())
-        lower_max = float(df['lower_limit'].max())
-        upper_min = float(df['upper_limit'].min())
+        lower_min = float(df['mode_lower'].min())
+        upper_max = float(df['mode_upper'].max())
+        lower_max = float(df['mode_lower'].max())
+        upper_min = float(df['mode_upper'].min())
     else:
         lower_min = lower_max = upper_min = upper_max = None
 
@@ -1819,7 +1828,7 @@ def prepare_and_generate_run_based_excel(df_for_export, tolerance, downtime_gap_
         # then shot detail. Formula columns appended separately.
         desired_columns_base = [
             'tool_id',        # → EQUIPMENT_CODE
-            'supplier_name',  # → SUPPLIER
+            'supplier_id',  # → SUPPLIER
             'tooling_type',   # → TOOLING TYPE
             'part_id',        # → PART ID
             'part_name',      # → PART NAME
@@ -1827,7 +1836,7 @@ def prepare_and_generate_run_based_excel(df_for_export, tolerance, downtime_gap_
             'shot_time',      # → LOCAL_SHOT_TIME
             'mode_ct',        # → MODE CT (SEC)
             'approved_ct',    # → APPROVED CT (SEC)
-            'ACTUAL CT',
+            'actual_ct',
             'adj_ct_sec',     # → ADJUSTED CT (SEC)
             'time_diff_sec',  # → TIME DIFF SEC
             'stop_flag',      # → STOP
@@ -1849,10 +1858,10 @@ def prepare_and_generate_run_based_excel(df_for_export, tolerance, downtime_gap_
                     'start_time': m['start'],
                     'end_time': m['end'],
                     'mode_ct': m['mode_ct'],          # FIX: computed, not iloc[0]
-                    'lower_limit': (df_run_raw['lower_limit'].iloc[0]
-                                    if 'lower_limit' in df_run_raw.columns else 0),
-                    'upper_limit': (df_run_raw['upper_limit'].iloc[0]
-                                    if 'upper_limit' in df_run_raw.columns else np.inf),
+                    'mode_lower': (df_run_raw['mode_lower'].iloc[0]
+                                    if 'mode_lower' in df_run_raw.columns else 0),
+                    'mode_upper': (df_run_raw['mode_upper'].iloc[0]
+                                    if 'mode_upper' in df_run_raw.columns else np.inf),
                     'production_run_sec': m['duration'],
                     'total_runtime_sec': m['duration'],
                     'production_time_sec': m['prod_sec'],
@@ -1901,13 +1910,14 @@ def prepare_and_generate_run_based_excel(df_for_export, tolerance, downtime_gap_
                 final_export_df = export_df[list(dict.fromkeys(cols_to_keep_final))].rename(
                     columns={
                         'tool_id':       'EQUIPMENT_CODE',
-                        'supplier_name': 'SUPPLIER',
+                        'supplier_id':   'SUPPLIER',
                         'tooling_type':  'TOOLING TYPE',
                         'part_id':       'PART ID',
                         'part_name':     'PART NAME',
                         'shot_time':     'LOCAL_SHOT_TIME',
                         'mode_ct':       'MODE CT (SEC)',
                         'approved_ct':   'APPROVED CT (SEC)',
+                        'actual_ct':     'ACTUAL CT',
                         'adj_ct_sec':    'ADJUSTED CT (SEC)',
                         'time_diff_sec': 'TIME DIFF SEC',
                         'stop_flag':     'STOP',
@@ -2025,8 +2035,8 @@ def generate_excel_report(all_runs_data, tolerance):
             ws.write('G2', 'Upper Limit (sec)', label_format)
             ws.write('H2', 'Stops', label_format)
 
-            lower_limit_val = data.get('lower_limit')
-            upper_limit_val = data.get('upper_limit')
+            lower_limit_val = data.get('mode_lower')
+            upper_limit_val = data.get('mode_upper')
             ws.write('F3', lower_limit_val if lower_limit_val is not None else 'N/A', secs_format)
             ws.write('G3', upper_limit_val if upper_limit_val is not None else 'N/A', secs_format)
 
@@ -2145,7 +2155,7 @@ def generate_excel_report(all_runs_data, tolerance):
                         else:
                             ws.write_blank(current_row_excel_idx, c_idx, None, cell_format)
                     elif isinstance(value, (int, float, np.number)):
-                        if col_name in ['ACTUAL CT', 'ADJUSTED CT (SEC)',
+                        if col_name in ['actual_ct', 'ADJUSTED CT (SEC)',
                                         'MODE CT (SEC)', 'APPROVED CT (SEC)',
                                         'TIME DIFF SEC']:
                             cell_format = secs_format
@@ -2252,7 +2262,7 @@ def calculate_risk_scores(df_all, run_interval_hours=8, min_shots_filter=1, tole
     initial_metrics = []
 
     for tool_id, df_tool in df_all.groupby('tool_id'):
-        df_tool = df_tool.sort_values(['shot_time', 'ACTUAL CT'])
+        df_tool = df_tool.sort_values(['shot_time', 'actual_ct'])
         if df_tool.empty:
             continue
 
