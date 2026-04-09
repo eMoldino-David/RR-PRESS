@@ -1016,15 +1016,10 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
     _stop_label   = "Stopped Stroke" if press_mode else "Stopped Shot"
     _app_label    = "Approved SPM" if press_mode else "Approved CT"
 
-    # 80% of mode CT in ms — wide enough to hover/tooltip easily
-    _bar_w = (int(mode_ct * 800) if isinstance(mode_ct, (int, float)) and mode_ct > 0
-              else None)
-
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=df['plot_time'], y=df['_y'],
         marker_color=df['color'], name=_y_label, showlegend=False,
-        **({"width": _bar_w} if _bar_w else {})
     ))
     fig.add_trace(go.Bar(x=[None], y=[None], name=_stroke_label,
                          marker_color='#3498DB', showlegend=True))
@@ -1102,7 +1097,7 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
     fig.update_layout(
         title=_title, xaxis_title="Date / Time",
         yaxis_title=_y_label, yaxis=dict(range=[0, y_cap]),
-        bargap=0.05, xaxis=dict(showgrid=True), showlegend=True,
+        bargap=0, xaxis=dict(showgrid=True), showlegend=True,
         legend=dict(title="Legend", orientation="h", yanchor="bottom",
                     y=1.02, xanchor="right", x=1)
     )
