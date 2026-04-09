@@ -1518,45 +1518,46 @@ def run_run_rate_ui():
         st.sidebar.warning("No data for the selected date range.")
         st.stop()
 
-    # 1–6. Cascading hierarchy filters — only rendered if the column exists in data
+    # 1–6. Cascading hierarchy filters — only rendered if column exists in data.
+    # Empty selection = show all (apply_filter handles this). User narrows deliberately.
     opts_proj = get_options_multi(df_all, 'project_id')
     if opts_proj:
-        sel_proj = st.sidebar.multiselect("Project", opts_proj, default=opts_proj, key="rr_f_project")
+        sel_proj = st.sidebar.multiselect("Project", opts_proj, default=[], key="rr_f_project")
         df_f1 = apply_filter(df_all, 'project_id', sel_proj)
     else:
         df_f1 = df_all
 
     opts_mat = get_options_multi(df_f1, 'material')
     if opts_mat:
-        sel_mat = st.sidebar.multiselect("Material", opts_mat, default=opts_mat, key="rr_f_material")
+        sel_mat = st.sidebar.multiselect("Material", opts_mat, default=[], key="rr_f_material")
         df_f2 = apply_filter(df_f1, 'material', sel_mat)
     else:
         df_f2 = df_f1
 
     opts_part = get_options_multi(df_f2, 'part_id')
     if opts_part:
-        sel_part = st.sidebar.multiselect("Part", opts_part, default=opts_part, key="rr_f_part")
+        sel_part = st.sidebar.multiselect("Part", opts_part, default=[], key="rr_f_part")
         df_f3 = apply_filter(df_f2, 'part_id', sel_part)
     else:
         df_f3 = df_f2
 
     opts_sup = get_options_multi(df_f3, 'supplier_id')
     if opts_sup:
-        sel_sup = st.sidebar.multiselect("Supplier", opts_sup, default=opts_sup, key="rr_f_supplier")
+        sel_sup = st.sidebar.multiselect("Supplier", opts_sup, default=[], key="rr_f_supplier")
         df_f4 = apply_filter(df_f3, 'supplier_id', sel_sup)
     else:
         df_f4 = df_f3
 
     opts_plt = get_options_multi(df_f4, 'plant_id')
     if opts_plt:
-        sel_plt = st.sidebar.multiselect("Plant", opts_plt, default=opts_plt, key="rr_f_plant")
+        sel_plt = st.sidebar.multiselect("Plant", opts_plt, default=[], key="rr_f_plant")
         df_f5 = apply_filter(df_f4, 'plant_id', sel_plt)
     else:
         df_f5 = df_f4
 
     opts_tt = get_options_multi(df_f5, 'tooling_type')
     if opts_tt:
-        sel_tt = st.sidebar.multiselect("Tooling Type", opts_tt, default=opts_tt, key="rr_f_tooling_type")
+        sel_tt = st.sidebar.multiselect("Tooling Type", opts_tt, default=[], key="rr_f_tooling_type")
         df_filtered = apply_filter(df_f5, 'tooling_type', sel_tt)
     else:
         df_filtered = df_f5
@@ -1619,17 +1620,17 @@ def run_run_rate_ui():
     )
 
     # If the session state selection contains tools not in current scope
-    # (e.g. after a new file upload or filter change), reset to first tool.
+    # (e.g. after a filter change), drop stale entries but don't auto-fill.
     _prev = st.session_state.get("rr_tool_select_inline", [])
     _valid_prev = [t for t in _prev if t in tool_ids]
-    _default = _valid_prev if _valid_prev else tool_ids[:1]
 
     col_sel, col_mode = st.columns([3, 1])
     with col_sel:
         selected_tools = st.multiselect(
             "Select tool(s) for Dashboard & Trends",
             options=tool_ids,
-            default=_default,
+            default=_valid_prev,
+            placeholder="Choose a tool to begin analysis...",
             key="rr_tool_select_inline"
         )
     with col_mode:
@@ -1646,17 +1647,12 @@ def run_run_rate_ui():
 
     st.markdown("---")
 
-    if not selected_tools:
-        st.info("Select at least one tool above to begin analysis.")
-        st.stop()
-
-    df_tool_scope = df_filtered[df_filtered[id_col].isin(selected_tools)]
+    df_tool_scope = (df_filtered[df_filtered[id_col].isin(selected_tools)]
+                     if selected_tools else pd.DataFrame())
     tool_name_display = (selected_tools[0] if len(selected_tools) == 1
-                         else f"{len(selected_tools)} tools: {', '.join(selected_tools)}")
+                         else f"{len(selected_tools)} tools: {', '.join(selected_tools)}"
+                         if selected_tools else "")
 
-    # ------------------------------------------------------------------
-    # Helper: render side-by-side columns
-    # ------------------------------------------------------------------
     def _render_side_by_side(render_fn, *args, **kwargs):
         cols = st.columns(len(selected_tools))
         for i, t_id in enumerate(selected_tools):
@@ -1671,17 +1667,17 @@ def run_run_rate_ui():
                 else:
                     st.warning(f"No data for {t_id}")
 
-    # ------------------------------------------------------------------
-    # Tabs
-    # ------------------------------------------------------------------
     tab1, tab2, tab3 = st.tabs(["Risk Tower", "Run Rate Dashboard", "Trends"])
 
     with tab1:
+        # Risk Tower always uses the full filter scope — no tool selection needed
         render_risk_tower(df_filtered, run_interval_hours, min_shots_filter,
                           tolerance, downtime_gap_tolerance)
 
     with tab2:
-        if view_mode == "Side-by-Side":
+        if not selected_tools:
+            st.info("👆 Select one or more tools in the Tool Selection above to view the dashboard.")
+        elif view_mode == "Side-by-Side":
             _render_side_by_side(
                 render_dashboard,
                 tolerance, downtime_gap_tolerance, run_interval_hours,
@@ -1695,7 +1691,9 @@ def run_run_rate_ui():
             )
 
     with tab3:
-        if view_mode == "Side-by-Side":
+        if not selected_tools:
+            st.info("👆 Select one or more tools in the Tool Selection above to view trends.")
+        elif view_mode == "Side-by-Side":
             _render_side_by_side(
                 render_trends_tab,
                 tolerance, downtime_gap_tolerance,
