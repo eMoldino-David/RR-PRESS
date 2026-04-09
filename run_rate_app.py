@@ -138,12 +138,16 @@ def render_trends_tab(df_tool, tool_id_selection, tolerance, downtime_gap_tolera
 
     with st.expander("ℹ️ About Trends Metrics"):
         st.markdown("""
-        - **Stability Index (%)**: Percentage of run time spent in production.
-        - **Efficiency (%)**: Percentage of shots that were normal (non-stops).
-        - **MTTR (min)**: Mean Time To Repair (avg stop duration).
-        - **MTBF (min)**: Mean Time Between Failures (avg uptime between stops).
-        - **Total Shots**: Total output for the period.
-        - **Stop Events**: Number of times the machine stopped.
+        - **RR Time Stability (%)**: Percentage of run time spent in production (Production Time / Total Run Duration).
+        - **RR Shot Efficiency (%)**: Percentage of shots that were normal (non-stops).
+        - **RR MTTR (min)**: Mean Time To Repair — average stop duration.
+        - **RR MTBF (min)**: Mean Time Between Failures — average uptime between stops.
+        - **Total Run Duration (h)**: Total elapsed time from first to last shot including downtime.
+        - **Production Time (h)**: Time spent in normal production (stop_flag = 0).
+        - **RR Downtime (h)**: Total time classified as stopped.
+        - **Total Shots**: Total shot count for the period.
+        - **Normal Shots**: Shots classified as normal (stop_flag = 0).
+        - **Stop Events**: Number of discrete stop occurrences.
         """)
 
     trend_data = []
@@ -273,27 +277,83 @@ def render_trends_tab(df_tool, tool_id_selection, tolerance, downtime_gap_tolera
         st.markdown("---")
 
     st.subheader("Visual Trend")
-    metric_to_plot = st.selectbox(
-        "Select Metric to Visualize",
-        ['RR Time Stability (%)', 'RR Shot Efficiency (%)', 'RR MTTR (min)',
-         'RR MTBF (min)', 'Total Shots', 'Total Run Duration (h)',
-         'Production Time (h)', 'RR Downtime (h)'],
-        key=f"{_k}trend_viz_select"
-    )
 
-    fig = px.line(df_trends.sort_index(ascending=True), x=period_name,
-                  y=metric_to_plot, markers=True,
-                  title=f"{metric_to_plot} Trend ({trend_freq})")
+    _all_metrics = [
+        'RR Time Stability (%)', 'RR Shot Efficiency (%)',
+        'RR MTTR (min)', 'RR MTBF (min)',
+        'Total Run Duration (h)', 'Production Time (h)', 'RR Downtime (h)',
+        'Total Shots', 'Normal Shots', 'Stop Events',
+    ]
+    _chart_types = ['Line', 'Bar']
 
-    if '%)' in metric_to_plot:
+    ca, cb, cc = st.columns([2, 2, 2])
+    with ca:
+        m1 = st.selectbox("Primary metric (left Y)", _all_metrics,
+                          index=0, key=f"{_k}trend_m1")
+        t1 = st.radio("Chart type", _chart_types, horizontal=True,
+                      key=f"{_k}trend_t1")
+    with cb:
+        m2_opts = ['None'] + _all_metrics
+        m2 = st.selectbox("Secondary metric (right Y)", m2_opts,
+                          index=2, key=f"{_k}trend_m2")
+        if m2 != 'None':
+            t2 = st.radio("Chart type ", _chart_types, horizontal=True,
+                          key=f"{_k}trend_t2")
+        else:
+            t2 = 'Line'
+    with cc:
+        show_bands = st.checkbox("Show % reference bands", value=True,
+                                 key=f"{_k}trend_bands",
+                                 help="Colour bands for 0–50 / 50–70 / 70–100% on % metrics")
+
+    df_plot = df_trends.sort_values(period_name, ascending=True)
+
+    fig = make_subplots(specs=[[{"secondary_y": m2 != 'None'}]])
+
+    def _add_trace(fig, df, x, y, chart_type, secondary, name, colour):
+        if chart_type == 'Bar':
+            fig.add_trace(
+                go.Bar(x=df[x], y=df[y], name=name,
+                       marker_color=colour, opacity=0.75),
+                secondary_y=secondary
+            )
+        else:
+            fig.add_trace(
+                go.Scatter(x=df[x], y=df[y], name=name, mode='lines+markers',
+                           line=dict(color=colour, width=2),
+                           marker=dict(size=6)),
+                secondary_y=secondary
+            )
+
+    _c1 = rr_utils.PASTEL_COLORS['blue']
+    _c2 = rr_utils.PASTEL_COLORS['orange']
+
+    _add_trace(fig, df_plot, period_name, m1, t1, False, m1, _c1)
+    if m2 != 'None':
+        _add_trace(fig, df_plot, period_name, m2, t2, True, m2, _c2)
+
+    # % reference bands on whichever % metric is primary
+    if show_bands and '%)' in m1:
         for y0, y1, c in [(0, 50, rr_utils.PASTEL_COLORS['red']),
                           (50, 70, rr_utils.PASTEL_COLORS['orange']),
                           (70, 100, rr_utils.PASTEL_COLORS['green'])]:
-            fig.add_shape(type="rect", xref="paper", x0=0, x1=1, y0=y0, y1=y1,
-                          fillcolor=c, opacity=0.1, layer="below", line_width=0)
-        fig.update_yaxes(range=[0, 105])
+            fig.add_shape(type="rect", xref="paper", x0=0, x1=1,
+                          y0=y0, y1=y1, yref="y",
+                          fillcolor=c, opacity=0.08, layer="below", line_width=0)
+        fig.update_yaxes(range=[0, 105], secondary_y=False)
 
-    st.plotly_chart(fig, width='stretch')
+    title = f"{m1} Trend ({trend_freq})" + (f"  vs  {m2}" if m2 != 'None' else '')
+    fig.update_layout(
+        title=title,
+        barmode='group',
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        xaxis_title=period_name,
+    )
+    fig.update_yaxes(title_text=m1, secondary_y=False)
+    if m2 != 'None':
+        fig.update_yaxes(title_text=m2, secondary_y=True)
+
+    st.plotly_chart(fig, use_container_width=True)
 
 
 def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_tolerance,
