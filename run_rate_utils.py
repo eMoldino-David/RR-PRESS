@@ -1034,7 +1034,7 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
             fig.add_annotation(x=x_str, y=0.98, yref='paper', text=lbl,
                                showarrow=False, xanchor='left',
                                font=dict(color='rgba(167,139,250,1)', size=10),
-                               bgcolor='rgba(240,240,240,0.85)',
+                               bgcolor='rgba(0,0,0,0)',
                                bordercolor='rgba(167,139,250,1)', borderwidth=1, borderpad=2)
 
     if press_mode:
@@ -1183,7 +1183,7 @@ def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM', show_approved_ct=Fals
             fig.add_annotation(x=x_str, y=0.98, yref='paper', text=lbl,
                                showarrow=False, xanchor='left',
                                font=dict(color='rgba(167,139,250,1)', size=10),
-                               bgcolor='rgba(240,240,240,0.85)',
+                               bgcolor='rgba(0,0,0,0)',
                                bordercolor='rgba(167,139,250,1)', borderwidth=1, borderpad=2)
 
     y_max = max(
@@ -1483,7 +1483,7 @@ def plot_ct_histogram(df):
                 fig.add_vline(x=x, line_dash='dash', line_color=PASTEL_COLORS['orange'],
                               line_width=1.2,
                               annotation=dict(text=lbl, font=dict(color=PASTEL_COLORS['orange'], size=10),
-                                              bgcolor='rgba(240,240,240,0.85)',
+                                              bgcolor='rgba(0,0,0,0)',
                                               bordercolor=PASTEL_COLORS['orange'], borderwidth=1,
                                               borderpad=2, yref='paper', y=y_pos, xanchor=xanc))
         fig.add_vrect(x0=mode_min, x1=mode_max,
@@ -1494,7 +1494,7 @@ def plot_ct_histogram(df):
         ]:
             fig.add_vline(x=x, line_dash='dot', line_color='#4A90D9', line_width=1.5,
                           annotation=dict(text=lbl, font=dict(color='#4A90D9', size=10),
-                                          bgcolor='rgba(240,240,240,0.85)',
+                                          bgcolor='rgba(0,0,0,0)',
                                           bordercolor='#4A90D9', borderwidth=1,
                                           borderpad=2, yref='paper', y=y_pos, xanchor=xanc))
     else:
@@ -1506,7 +1506,7 @@ def plot_ct_histogram(df):
             if x is not None:
                 fig.add_vline(x=x, line_dash=dash, line_color=colour, line_width=1.5,
                               annotation=dict(text=lbl, font=dict(color=colour, size=11),
-                                              bgcolor='rgba(240,240,240,0.85)',
+                                              bgcolor='rgba(0,0,0,0)',
                                               bordercolor=colour, borderwidth=1,
                                               borderpad=3, yref='paper', y=y_pos, xanchor=xanc))
 
