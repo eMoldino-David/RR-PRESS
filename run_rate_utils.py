@@ -1028,7 +1028,7 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
                 continue  # no boundary line before the first run
             lbl = label_map.get(run_id, f'Run {i + 1}')
             fig.add_vline(
-                x=start_time, line_width=1.5, line_dash='dash', line_color='purple',
+                x=start_time.isoformat(), line_width=1.5, line_dash='dash', line_color='purple',
                 annotation=dict(
                     text=lbl, font=dict(color='purple', size=10),
                     bgcolor='rgba(240,240,240,0.85)',
@@ -1136,7 +1136,7 @@ def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM',
             lbl = label_map.get(run_id, f'Run {i + 1}')
             bucket_start = pd.Timestamp(start_time).floor(freq)
             fig.add_vline(
-                x=bucket_start, line_width=1.5, line_dash='dash', line_color='purple',
+                x=bucket_start.isoformat(), line_width=1.5, line_dash='dash', line_color='purple',
                 annotation=dict(
                     text=lbl, font=dict(color='purple', size=10),
                     bgcolor='rgba(240,240,240,0.85)',
