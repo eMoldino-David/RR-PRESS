@@ -122,8 +122,9 @@ def render_risk_tower(df_all_tools, run_interval_hours, min_shots_filter, tolera
 
 def render_trends_tab(df_tool, tolerance, downtime_gap_tolerance,
                       run_interval_hours, min_shots_filter,
-                      tool_id_selection='Unknown'):
+                      tool_id_selection='Unknown', key_prefix=''):
     """Renders the Trends Analysis tab."""
+    _k = key_prefix  # short alias for prefixing widget keys
     st.header("Historical Performance Trends")
     st.info(
         f"Trends are calculated using 'Run-Based' logic. Gaps larger than "
@@ -134,7 +135,7 @@ def render_trends_tab(df_tool, tolerance, downtime_gap_tolerance,
     col_ctrl, _ = st.columns([1, 3])
     with col_ctrl:
         trend_freq = st.selectbox("Select Trend Frequency", ["Daily", "Weekly", "Monthly"],
-                                  key="trend_freq_select")
+                                  key=f"{_k}trend_freq_select")
 
     with st.expander("ℹ️ About Trends Metrics"):
         st.markdown("""
@@ -274,7 +275,7 @@ def render_trends_tab(df_tool, tolerance, downtime_gap_tolerance,
     metric_to_plot = st.selectbox(
         "Select Metric to Visualize",
         ['Stability Index (%)', 'Efficiency (%)', 'MTTR (min)', 'MTBF (min)', 'Total Shots'],
-        key="trend_viz_select"
+        key=f"{_k}trend_viz_select"
     )
 
     fig = px.line(df_trends.sort_index(ascending=True), x=period_name,
@@ -293,14 +294,16 @@ def render_trends_tab(df_tool, tolerance, downtime_gap_tolerance,
 
 
 def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_tolerance,
-                     run_interval_hours, show_approved_ct, min_shots_filter):
+                     run_interval_hours, show_approved_ct, min_shots_filter,
+                     key_prefix=''):
     """Renders the main Run Rate Dashboard tab."""
+    _k = key_prefix  # short alias for prefixing widget keys
 
     analysis_level = st.radio(
         "Select Analysis Level",
         options=["Daily (by Run)", "Weekly (by Run)", "Monthly (by Run)", "Custom Period (by Run)"],
         horizontal=True,
-        key="rr_analysis_level"
+        key=f"{_k}rr_analysis_level"
     )
 
     # Press / stamping mode — auto-detected from tooling_type, overridable by toggle
@@ -311,7 +314,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
     press_mode = st.toggle(
         "Press / Stamping Mode",
         value=bool(_press_auto),
-        key="rr_press_mode",
+        key=f"{_k}rr_press_mode",
         help="Enables stroke rate charts (SPM/SPH) for press and stamping tools."
     )
 
@@ -321,7 +324,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             options=["SPM", "SPH", "CT"],
             index=0,
             horizontal=True,
-            key="rr_stroke_unit",
+            key=f"{_k}rr_stroke_unit",
             help="SPM = Strokes Per Minute  |  SPH = Strokes Per Hour  |  CT = Cycle Time (sec)"
         )
     else:
@@ -360,7 +363,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         df_tool, run_interval_hours, tolerance, downtime_gap_tolerance
     )
 
-    detailed_view = st.toggle("Show Detailed Analysis", value=True, key="rr_detailed_view")
+    detailed_view = st.toggle("Show Detailed Analysis", value=True, key=f"{_k}rr_detailed_view")
 
     if df_processed.empty:
         st.error(f"Could not process data for {tool_id_selection}. "
@@ -386,7 +389,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             selected_date = st.date_input(
                 "Select Date", value=max_date,
                 min_value=min_date, max_value=max_date,
-                key="rr_daily_select"
+                key=f"{_k}rr_daily_select"
             )
         with col_info:
             info_placeholder = st.empty()
@@ -405,7 +408,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             with c_yr:
                 selected_year = st.selectbox(
                     "Select Year", options=available_years,
-                    index=len(available_years) - 1, key="rr_year_week_select"
+                    index=len(available_years) - 1, key=f"{_k}rr_year_week_select"
                 )
             weeks_in_year = df_processed[df_processed['year'] == selected_year]['week'].unique()
             sorted_weeks = sorted(weeks_in_year)
@@ -414,7 +417,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                     "Select Week", options=sorted_weeks,
                     index=len(sorted_weeks) - 1,
                     format_func=lambda w: f"Week {w}",
-                    key="rr_week_select"
+                    key=f"{_k}rr_week_select"
                 )
         try:
             start_of_week = datetime.strptime(
@@ -447,7 +450,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             with c_yr:
                 selected_year = st.selectbox(
                     "Select Year", options=available_years,
-                    index=len(available_years) - 1, key="rr_year_select"
+                    index=len(available_years) - 1, key=f"{_k}rr_year_select"
                 )
             months_in_year = df_processed[
                 df_processed['year_cal'] == selected_year
@@ -458,7 +461,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                     "Select Month", options=sorted_months,
                     index=len(sorted_months) - 1,
                     format_func=lambda p: p.strftime('%B'),
-                    key="rr_month_select"
+                    key=f"{_k}rr_month_select"
                 )
         with col_m_info:
             info_placeholder = st.empty()
@@ -476,11 +479,11 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             with c1:
                 start_date = st.date_input("Start date", min_date,
                                            min_value=min_date, max_value=max_date,
-                                           key="rr_custom_start")
+                                           key=f"{_k}rr_custom_start")
             with c2:
                 end_date = st.date_input("End date", max_date,
                                          min_value=start_date, max_value=max_date,
-                                         key="rr_custom_end")
+                                         key=f"{_k}rr_custom_end")
         with col_c_info:
             info_placeholder = st.empty()
             info_base_text = (
@@ -1017,7 +1020,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             data=df_shot_data.to_csv(index=False),
             file_name=f"shot_data_{tool_id_selection.replace(' ', '_')}.csv",
             mime="text/csv",
-            key="rr_shot_csv"
+            key=f"{_k}rr_shot_csv"
         )
 
     st.markdown("---")
@@ -1032,7 +1035,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             st.header("Detailed Analysis")
         with c_view:
             analysis_view_mode = st.selectbox("Group By", ["Run", "Hour"],
-                                              key="rr_view_mode")
+                                              key=f"{_k}rr_view_mode")
     else:
         st.header("Run-Based Analysis")
 
@@ -1405,9 +1408,13 @@ def run_run_rate_ui():
     def get_options_multi(df, col):
         if col not in df.columns:
             return []
-        raw = [str(x) for x in df[col].unique()
-               if str(x).lower() not in ["nan", "none", ""]]
-        known   = sorted([x for x in raw if x.lower() != "unknown"])
+        # Strip whitespace before deduplication so "Supplier " and "Supplier"
+        # don't appear as two separate options when multiple files are uploaded.
+        raw = sorted(set(
+            str(x).strip() for x in df[col].unique()
+            if str(x).strip().lower() not in ["nan", "none", "", "nat"]
+        ))
+        known   = [x for x in raw if x.lower() != "unknown"]
         unknown = [x for x in raw if x.lower() == "unknown"]
         return known + unknown
 
@@ -1570,7 +1577,7 @@ def run_run_rate_ui():
                 )
                 t_df = df_tool_scope[df_tool_scope[id_col] == t_id]
                 if not t_df.empty:
-                    render_fn(t_df, t_id, *args, **kwargs)
+                    render_fn(t_df, t_id, *args, key_prefix=f"{t_id}_", **kwargs)
                 else:
                     st.warning(f"No data for {t_id}")
 

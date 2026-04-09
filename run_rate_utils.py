@@ -288,6 +288,17 @@ def load_all_data(files, _cache_version=None):
         df_final['tool_id'] = 'Unknown'
     df_final['tool_id'] = df_final['tool_id'].fillna('Unknown').astype(str)
 
+    # Normalise all hierarchy columns — strip whitespace and standardise
+    # blank/null values to 'Unknown' so filters deduplicate correctly
+    # when multiple files are uploaded. Matches cr_CG_utils behaviour.
+    for _col in ['supplier_id', 'plant_id', 'project_id', 'material',
+                 'part_id', 'tooling_type']:
+        if _col in df_final.columns:
+            df_final[_col] = (df_final[_col].astype(str).str.strip()
+                              .replace({'nan': 'Unknown', 'none': 'Unknown',
+                                        'None': 'Unknown', 'NaN': 'Unknown',
+                                        'NAT': 'Unknown', '': 'Unknown'}))
+
     return df_final
 
 
