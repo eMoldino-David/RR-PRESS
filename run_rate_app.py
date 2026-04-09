@@ -337,19 +337,12 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
     # slider change automatically triggers a fresh computation.
     # ------------------------------------------------------------------
     @st.cache_data(show_spinner="Performing initial data processing...")
-    def get_processed_data(df, interval_hours, tolerance, downtime_gap_tolerance):
+    def get_processed_data(df, interval_hours, tolerance, downtime_gap_tolerance,
+                           _schema_version=2):
         """
         Single authoritative processing pass over the FULL tool dataset.
-
-        Passing the full df (not a day/week slice) ensures mode_ct is computed
-        from the correct run boundaries.  Slicing df_processed afterward for
-        display preserves those pre-computed mode_ct, stop_flag, lower_limit
-        and upper_limit values — no re-computation ever happens on a subset.
-
-        The run-start stop_flag reset (with startup CT guard) now lives inside
-        RunRateCalculator._calculate_all_metrics. A post-processing reset here
-        would override the guard and re-introduce the wide-bar bug for high-CT
-        first-of-run shots (e.g. machine restarting after a multi-day gap).
+        _schema_version: bump this when internal column names change to bust the cache.
+        v2: lower_limit/upper_limit → mode_lower/mode_upper, ACTUAL CT → actual_ct
         """
         base_calc = rr_utils.RunRateCalculator(
             df, tolerance, downtime_gap_tolerance,
