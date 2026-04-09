@@ -1587,105 +1587,133 @@ def plot_interstroke_gap(df):
 
 def plot_ct_histogram(df):
     """
-    Cycle Time Distribution Histogram — available for all tool types.
-    Caps x-axis to exclude 999.9 hard-stop sentinel values.
-    Limit lines derived from the mode of per-shot limit columns so they
-    match the actual stop_flag classification boundary, not just row[0].
+    Cycle Time Distribution Histogram — all tool types.
+    Single-run: draws lines for mode, lower, upper.
+    Multi-run (different mode CTs across runs): draws shaded bands for
+    the mode spread and the full tolerance envelope, with a unified bar
+    colour — the blue/red stop_flag split is misleading across runs with
+    different limits so we drop it here.
     """
     if df.empty:
         return
-    normal_df = df[df['stop_flag'] == 0]
-    mode_ct_val = _get_stable_mode(normal_df['ACTUAL CT'].dropna())
 
-    # Use mode of limit columns — consistent with how stop_flag was assigned
-    # per-run. iloc[0] is wrong when multiple runs have different mode CTs.
-    lower_lim = (_get_stable_mode(df['lower_limit'].dropna())
-                 if 'lower_limit' in df.columns else None) or None
-    upper_lim = (_get_stable_mode(df['upper_limit'].dropna())
-                 if 'upper_limit' in df.columns else None) or None
+    all_cts  = df['ACTUAL CT'].dropna()
+    has_lims = 'lower_limit' in df.columns and 'upper_limit' in df.columns
 
-    x_cap   = (upper_lim * 4) if upper_lim else (mode_ct_val * 6 if mode_ct_val else 200)
-    normal  = normal_df['ACTUAL CT'].dropna()
-    normal  = normal[normal <= x_cap]
-    stopped = df[df['stop_flag'] == 1]['ACTUAL CT'].dropna()
-    stopped = stopped[stopped <= x_cap]
+    # Per-run mode CTs — use the pre-computed column if available
+    if 'run_id' in df.columns and 'mode_ct' in df.columns:
+        run_modes  = df.groupby('run_id')['mode_ct'].first().dropna()
+    else:
+        run_modes  = pd.Series([_get_stable_mode(
+            df[df['stop_flag'] == 0]['ACTUAL CT'].dropna())])
 
-    if normal.empty:
-        st.info("No normal stroke data for histogram.")
+    mode_min = float(run_modes.min())
+    mode_max = float(run_modes.max())
+    multi_run = (mode_max - mode_min) > 0.05   # >0.05s difference = meaningfully different
+
+    if has_lims:
+        lower_min = float(df['lower_limit'].min())
+        upper_max = float(df['upper_limit'].max())
+        lower_max = float(df['lower_limit'].max())   # tightest lower
+        upper_min = float(df['upper_limit'].min())   # tightest upper
+    else:
+        lower_min = lower_max = upper_min = upper_max = None
+
+    x_cap = (upper_max * 4) if upper_max else (mode_max * 6 if mode_max else 200)
+    all_cts_capped = all_cts[all_cts <= x_cap]
+    n_excluded = (all_cts > x_cap).sum()
+    n_total = len(all_cts_capped)
+
+    if all_cts_capped.empty:
+        st.info("No cycle time data for histogram.")
         return
 
-    n_excluded = (df['ACTUAL CT'].dropna() > x_cap).sum()
+    multi_run_note = (
+        f"**Multi-run view:** {len(run_modes)} runs with mode CTs ranging "
+        f"{mode_min:.2f}s – {mode_max:.2f}s. Shaded bands show the spread "
+        f"of process centres and tolerance envelopes across runs."
+        if multi_run else ""
+    )
 
     with st.expander("ℹ️ How to read this chart", expanded=False):
         st.markdown(f"""
-        **What it shows:** Frequency distribution of all cycle times, split into
-        normal strokes (blue) and stopped strokes (red).
+        **What it shows:** Frequency distribution of all cycle times in the selected period.
 
-        **The tall blue peak** around the mode CT ({mode_ct_val:.2f}s) is the tool
-        running in its normal rhythm. The tighter this peak, the more consistent it is.
+        {'**Green band** = full tolerance envelope (min lower limit → max upper limit across all runs). Shots outside this are stops.' if multi_run and lower_min else '**Orange dashed lines** = tolerance band. Shots outside are classified stopped.'}
+        {'**Blue shaded band** = spread of mode CTs across runs — wider band means the process centre drifted between runs.' if multi_run else f'**Blue line** = mode CT ({mode_min:.2f}s) — the tools proven normal rhythm.'}
 
-        **Stopped strokes (red)** appear outside the tolerance band. Their distribution reveals:
-        - A peak just outside the limit → most stops are brief hesitations
-        - A spread-out tail → stops vary widely in duration (many different causes)
-        - Peaks at specific values → recurring fault types with consistent recovery times
-
-        **Orange dashed lines** = tolerance band boundaries. Shots outside this band
-        are classified as stopped. If bars cross the orange line without changing colour,
-        this is normal — it means those shots span a bin that straddles the boundary.
+        {multi_run_note}
 
         **Note:** {n_excluded} shots with CT > {x_cap:.0f}s (including 999.9s hard-stop
-        sentinels) are excluded from this view to prevent the scale being compressed.
-        They are still counted in all stability metrics.
+        sentinels) are excluded to prevent scale compression. Still counted in all metrics.
         """)
 
-    bin_size = max(0.1, mode_ct_val * 0.02) if mode_ct_val else 0.5
+    bin_size = max(0.1, mode_min * 0.02) if mode_min else 0.5
     fig = go.Figure()
+
+    # Single unified bar colour — avoids misleading per-run stop_flag colouring
     fig.add_trace(go.Histogram(
-        x=normal, name='Normal Strokes',
-        marker_color='rgba(52, 152, 219, 0.75)',
-        marker_line=dict(color='rgba(52, 152, 219, 1.0)', width=0.5),
+        x=all_cts_capped, name='All Strokes',
+        marker_color='rgba(52, 152, 219, 0.70)',
+        marker_line=dict(color='rgba(52, 152, 219, 1.0)', width=0.4),
         xbins=dict(size=bin_size),
-        hovertemplate='CT: %{x:.2f}s<br>Count: %{y}<extra>Normal</extra>'
+        hovertemplate='CT: %{x:.2f}s<br>Count: %{y}<extra></extra>'
     ))
-    if not stopped.empty:
-        fig.add_trace(go.Histogram(
-            x=stopped, name='Stopped Strokes',
-            marker_color='rgba(255, 105, 97, 0.65)',
-            marker_line=dict(color='rgba(255, 105, 97, 1.0)', width=0.5),
-            xbins=dict(size=bin_size),
-            hovertemplate='CT: %{x:.2f}s<br>Count: %{y}<extra>Stopped</extra>'
-        ))
 
-    # Stagger annotation y positions explicitly to prevent overlap.
-    # Mode goes at 97%, Upper at 80%, Lower at 12% of chart height.
-    vlines = [
-        (mode_ct_val, f'Mode {mode_ct_val:.2f}s', '#4A90D9', 'solid',  0.97, 'left'),
-    ]
-    if lower_lim:
-        vlines.append((lower_lim, f'Lower {lower_lim:.2f}s',
-                       PASTEL_COLORS['orange'], 'dash', 0.12, 'right'))
-    if upper_lim:
-        vlines.append((upper_lim, f'Upper {upper_lim:.2f}s',
-                       PASTEL_COLORS['orange'], 'dash', 0.80, 'left'))
+    if multi_run:
+        # Tolerance envelope band (green)
+        if lower_min is not None:
+            fig.add_vrect(x0=lower_min, x1=upper_max,
+                          fillcolor='rgba(46,204,113,0.10)',
+                          layer='below', line_width=0,
+                          annotation_text='Tolerance envelope',
+                          annotation_position='top left',
+                          annotation=dict(font=dict(size=10, color='rgba(46,204,113,0.9)')))
+            # Outer edges of tolerance envelope
+            for x, lbl, y_pos, xanc in [
+                (lower_min, f'Lower min {lower_min:.2f}s', 0.10, 'right'),
+                (upper_max, f'Upper max {upper_max:.2f}s', 0.10, 'left'),
+            ]:
+                fig.add_vline(x=x, line_dash='dash', line_color=PASTEL_COLORS['orange'],
+                              line_width=1.2,
+                              annotation=dict(text=lbl, font=dict(color=PASTEL_COLORS['orange'], size=10),
+                                              bgcolor='rgba(240,240,240,0.85)',
+                                              bordercolor=PASTEL_COLORS['orange'], borderwidth=1,
+                                              borderpad=2, yref='paper', y=y_pos, xanchor=xanc))
 
-    for val, lbl, colour, dash, y_pos, xanchor in vlines:
-        if val is not None:
-            fig.add_vline(
-                x=val, line_dash=dash, line_color=colour, line_width=1.5,
-                annotation=dict(
-                    text=lbl, font=dict(color=colour, size=11),
-                    bgcolor='rgba(240,240,240,0.85)', borderpad=3,
-                    bordercolor=colour, borderwidth=1,
-                    yref='paper', y=y_pos,
-                    xanchor=xanchor
-                )
-            )
+        # Mode spread band (blue)
+        fig.add_vrect(x0=mode_min, x1=mode_max,
+                      fillcolor='rgba(52,152,219,0.18)',
+                      layer='below', line_width=0)
+        for x, lbl, y_pos, xanc in [
+            (mode_min, f'Mode min {mode_min:.2f}s', 0.90, 'right'),
+            (mode_max, f'Mode max {mode_max:.2f}s', 0.90, 'left'),
+        ]:
+            fig.add_vline(x=x, line_dash='dot', line_color='#4A90D9', line_width=1.5,
+                          annotation=dict(text=lbl, font=dict(color='#4A90D9', size=10),
+                                          bgcolor='rgba(240,240,240,0.85)',
+                                          bordercolor='#4A90D9', borderwidth=1,
+                                          borderpad=2, yref='paper', y=y_pos, xanchor=xanc))
+    else:
+        # Single-run: draw individual lines
+        for x, lbl, colour, dash, y_pos, xanc in [
+            (mode_min,  f'Mode {mode_min:.2f}s',   '#4A90D9',              'solid', 0.92, 'left'),
+            (lower_min, f'Lower {lower_min:.2f}s', PASTEL_COLORS['orange'], 'dash', 0.12, 'right'),
+            (upper_max, f'Upper {upper_max:.2f}s', PASTEL_COLORS['orange'], 'dash', 0.80, 'left'),
+        ]:
+            if x is not None:
+                fig.add_vline(x=x, line_dash=dash, line_color=colour, line_width=1.5,
+                              annotation=dict(text=lbl, font=dict(color=colour, size=11),
+                                              bgcolor='rgba(240,240,240,0.85)',
+                                              bordercolor=colour, borderwidth=1,
+                                              borderpad=3, yref='paper', y=y_pos, xanchor=xanc))
 
     fig.update_layout(
         barmode='overlay',
         title=dict(
-            text=f'Cycle Time Distribution — {len(normal)+len(stopped):,} shots '
-                 f'(capped at {x_cap:.0f}s, {n_excluded} excluded)',
+            text=f'Cycle Time Distribution — {n_total:,} shots '
+                 f'(capped at {x_cap:.0f}s, {n_excluded} excluded)'
+                 + (f' · {len(run_modes)} runs' if multi_run else ''),
             font=dict(size=14)
         ),
         xaxis_title='Cycle Time (sec)',
