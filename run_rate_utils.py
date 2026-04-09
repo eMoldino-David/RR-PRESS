@@ -1033,9 +1033,9 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
                           yref='paper', line=dict(width=1.5, dash='dash', color='rgba(167,139,250,1)'))
             fig.add_annotation(x=x_str, y=0.98, yref='paper', text=lbl,
                                showarrow=False, xanchor='left',
-                               font=dict(color='rgba(167,139,250,1)', size=10),
-                               bgcolor='rgba(0,0,0,0)',
-                               bordercolor='rgba(167,139,250,1)', borderwidth=1, borderpad=2)
+                               font=dict(color="white", size=10, weight="bold"),
+                               bgcolor='rgba(60,0,90,0.80)',
+                               bordercolor='rgba(167,139,250,1)', borderwidth=1, borderpad=3)
 
     if press_mode:
         y_cap = max((_mode_y or 10) * 2, 20)
@@ -1182,9 +1182,9 @@ def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM', show_approved_ct=Fals
                           yref='paper', line=dict(width=1.5, dash='dash', color='rgba(167,139,250,1)'))
             fig.add_annotation(x=x_str, y=0.98, yref='paper', text=lbl,
                                showarrow=False, xanchor='left',
-                               font=dict(color='rgba(167,139,250,1)', size=10),
-                               bgcolor='rgba(0,0,0,0)',
-                               bordercolor='rgba(167,139,250,1)', borderwidth=1, borderpad=2)
+                               font=dict(color="white", size=10, weight="bold"),
+                               bgcolor='rgba(60,0,90,0.80)',
+                               bordercolor='rgba(167,139,250,1)', borderwidth=1, borderpad=3)
 
     y_max = max(
         agg_n['normal'].dropna().max() if not agg_n['normal'].dropna().empty else 0,
