@@ -120,9 +120,8 @@ def render_risk_tower(df_all_tools, run_interval_hours, min_shots_filter, tolera
     )
 
 
-def render_trends_tab(df_tool, tolerance, downtime_gap_tolerance,
-                      run_interval_hours, min_shots_filter,
-                      tool_id_selection='Unknown', key_prefix=''):
+def render_trends_tab(df_tool, tool_id_selection, tolerance, downtime_gap_tolerance,
+                      run_interval_hours, min_shots_filter, key_prefix=''):
     """Renders the Trends Analysis tab."""
     _k = key_prefix  # short alias for prefixing widget keys
     st.header("Historical Performance Trends")
@@ -697,7 +696,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 unsafe_allow_html=True
             )
         with col5:
-            st.metric("Downtime", rr_utils.format_duration(down_t),
+            st.metric("Run Rate Downtime", rr_utils.format_duration(down_t),
                       help="Total Run Duration − Total Production Time.")
             st.markdown(
                 f'<span style="background-color:{rr_utils.PASTEL_COLORS["red"]};'
@@ -1120,9 +1119,9 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                     'mode_lower': 'Lower Limit (sec)',
                     'mode_upper': 'Upper Limit (sec)',
                     'mttr_min': 'MTTR (min)', 'mtbf_min': 'MTBF (min)',
-                    'stability_index': 'Stability (%)', 'stops': 'STOPS',
+                    'stability_index': 'Run Rate Time Stability (%)', 'stops': 'STOPS',
                     'MTTR (min)': 'MTTR (min)', 'MTBF (min)': 'MTBF (min)',
-                    'STABILITY %': 'Stability (%)', 'STOPS': 'STOPS',
+                    'STABILITY %': 'Run Rate Time Stability (%)', 'STOPS': 'STOPS',
                 }
                 approved_key = ('Approved CT' if 'Approved CT' in d_df.columns
                                 else 'approved_ct')
@@ -1142,7 +1141,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                     'Approved CT (sec)',
                     'Lower Limit (sec)', 'Upper Limit (sec)',
                     'Total Run duration (d/h/m)', 'Production Time (d/h/m)',
-                    'Downtime (d/h/m)', 'MTTR (min)', 'MTBF (min)', 'Stability (%)'
+                    'Downtime (d/h/m)', 'MTTR (min)', 'MTBF (min)', 'Run Rate Time Stability (%)'
                 ]
                 if not show_approved_ct and 'Approved CT (sec)' in final_cols:
                     final_cols.remove('Approved CT (sec)')
@@ -1153,7 +1152,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                     'Mode CT (sec)', 'Mode SPM', 'Mode SPH',
                     'Approved CT (sec)',
                     'Lower Limit (sec)', 'Upper Limit (sec)',
-                    'MTTR (min)', 'MTBF (min)', 'Stability (%)'
+                    'MTTR (min)', 'MTBF (min)', 'Run Rate Time Stability (%)'
                 ] if c in d_df.columns}
 
                 st.dataframe(d_df[final_cols].style.format(fmt, na_rep='—'),
@@ -1195,7 +1194,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             if run_summary_df is not None and not run_summary_df.empty:
                 rr_utils.plot_trend_chart(
                     run_summary_df, 'RUN ID', 'STABILITY %',
-                    "Stability per Run", "Run ID", "Stability (%)", is_stability=True
+                    "Stability per Run", "Run ID", "Run Rate Time Stability (%)", is_stability=True
                 )
                 with st.expander("View Stability Data Table", expanded=False):
                     df_renamed = rr_utils.get_renamed_summary_df(run_summary_df)
@@ -1327,7 +1326,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             if not hourly_summary_df.empty:
                 rr_utils.plot_trend_chart(
                     hourly_summary_df, 'hour', 'stability_index',
-                    "Hourly Stability Trend", "Hour of Day", "Stability (%)",
+                    "Hourly Stability Trend", "Hour of Day", "Run Rate Time Stability (%)",
                     is_stability=True
                 )
                 with st.expander("View Stability Data", expanded=False):
@@ -1613,9 +1612,9 @@ def run_run_rate_ui():
             )
         else:
             render_trends_tab(
-                df_tool_scope, tolerance, downtime_gap_tolerance,
-                run_interval_hours, min_shots_filter,
-                tool_id_selection=tool_name_display
+                df_tool_scope, tool_name_display,
+                tolerance, downtime_gap_tolerance,
+                run_interval_hours, min_shots_filter
             )
 
 

@@ -1425,8 +1425,15 @@ def plot_ct_histogram(df):
                 hovertemplate='CT: %{x:.2f}s<br>Count: %{y}<extra>' + name + '</extra>'
             ))
 
-    # KDE curve (numpy only, no scipy)
-    kde_data = all_cts_capped.values
+    # KDE curve and shape stats computed on NORMAL shots only.
+    # Stopped shots are already classified — including them always produces
+    # right skew (stops are slow by definition) making the analysis meaningless.
+    # Skew of normal shots reveals whether the process rhythm itself is drifting.
+    if 'stop_flag' in df.columns:
+        normal_capped = all_cts_capped[df.loc[all_cts_capped.index, 'stop_flag'] == 0]
+    else:
+        normal_capped = all_cts_capped
+    kde_data = normal_capped.values if len(normal_capped) > 0 else all_cts_capped.values
     n_kde    = len(kde_data)
     std_kde  = float(np.std(kde_data, ddof=1)) if n_kde > 1 else 1.0
     bw       = max(1.06 * std_kde * n_kde**(-0.2), 0.05)
@@ -1535,9 +1542,9 @@ def plot_ct_histogram(df):
                 lower_min=lower_min, upper_max=upper_max
             )
 
-        st.markdown("**📈 Distribution Analysis**")
+        st.markdown("**📈 Distribution Analysis** *(normal shots only)*")
         st.caption(
-            f"Mean {mean_ct:.2f}s · Median {median_ct:.2f}s · "
+            f"Normal shots — Mean {mean_ct:.2f}s · Median {median_ct:.2f}s · "
             f"CV {cv_pct:.1f}% · Skew {skew:+.2f}"
             + (f" · {pct_within:.0f}% within tolerance" if pct_within is not None else "")
         )
