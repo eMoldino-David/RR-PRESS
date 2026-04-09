@@ -1113,7 +1113,10 @@ def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM',
     if run_col:
         run_starts = df.groupby(run_col)['shot_time'].min().sort_values()
         for start_time in run_starts.iloc[1:]:
-            fig.add_vline(x=start_time, line_width=2, line_dash='dash', line_color='purple')
+            # Floor to bucket boundary so the line appears at the left edge
+            # of the first bar of the new run, not mid-bar
+            bucket_start = pd.Timestamp(start_time).floor(freq)
+            fig.add_vline(x=bucket_start, line_width=2, line_dash='dash', line_color='purple')
 
     y_max = max(
         agg_n['normal'].dropna().max() if not agg_n['normal'].dropna().empty else 0,
@@ -1585,6 +1588,126 @@ def plot_interstroke_gap(df):
     st.plotly_chart(fig, width='stretch')
 
 
+def _ct_histogram_analysis(mean_ct, median_ct, std, cv_pct, skew, bmc,
+                           pct_within, n_runs, multi_run,
+                           mode_min, mode_max, lower_min, upper_max):
+    """
+    Rule-based distribution shape analysis — no external API required.
+    Returns a formatted string describing this specific distribution and
+    a reference guide for common patterns.
+    """
+    lines = []
+
+    # ── Shape classification ───────────────────────────────────────────
+    bimodal      = bmc > 0.555
+    right_strong = skew > 1.0
+    right_mod    = 0.4 < skew <= 1.0
+    left_strong  = skew < -1.0
+    left_mod     = -1.0 <= skew < -0.4
+    symmetric    = abs(skew) <= 0.4
+
+    # ── Consistency rating ─────────────────────────────────────────────
+    if   cv_pct < 3:   consistency = "excellent (CV < 3%)"
+    elif cv_pct < 6:   consistency = "good (CV 3–6%)"
+    elif cv_pct < 12:  consistency = "moderate (CV 6–12%)"
+    else:              consistency = "poor (CV > 12%) — high variation"
+
+    # ── Tolerance performance ──────────────────────────────────────────
+    if pct_within is not None:
+        if   pct_within >= 98: tol_msg = f"{pct_within:.1f}% of shots are within the tolerance envelope — the process is well-contained."
+        elif pct_within >= 90: tol_msg = f"{pct_within:.1f}% within tolerance — generally good, but the tail of slow shots warrants attention."
+        elif pct_within >= 75: tol_msg = f"Only {pct_within:.1f}% within tolerance — a significant proportion of shots are outside the normal zone."
+        else:                   tol_msg = f"Only {pct_within:.1f}% within tolerance — the process is poorly controlled and needs investigation."
+    else:
+        tol_msg = ""
+
+    # ── This distribution paragraph ───────────────────────────────────
+    if bimodal:
+        shape_para = (
+            f"This distribution shows signs of **bimodality** (bimodality coefficient {bmc:.2f}), "
+            f"meaning the tool is running at two distinct cycle times rather than one consistent rhythm. "
+            f"This typically indicates a setup change, material batch switch, operator intervention, "
+            f"or a recurring fault that temporarily shifts the process to a different speed. "
+            f"Investigate whether the two peaks correspond to different shifts, materials, or run segments."
+        )
+    elif right_strong:
+        shape_para = (
+            f"The distribution is **strongly right-skewed** (skew {skew:+.2f}), with a long tail of slow shots "
+            f"pulling the mean ({mean_ct:.2f}s) above the median ({median_ct:.2f}s). "
+            f"This pattern is typical of a tool experiencing progressive drag, lubrication breakdown, "
+            f"material feeding issues, or intermittent jams that resolve without a full stop. "
+            f"The slow-shot tail is where downtime risk is accumulating."
+        )
+    elif right_mod:
+        shape_para = (
+            f"The distribution has a **moderate right skew** (skew {skew:+.2f}), indicating occasional slow shots "
+            f"beyond the normal rhythm. The mean ({mean_ct:.2f}s) sits slightly above the median ({median_ct:.2f}s). "
+            f"This is common when the tool occasionally hesitates — check lubrication intervals, "
+            f"material consistency, and whether slow shots cluster at a particular time of shift."
+        )
+    elif left_strong:
+        shape_para = (
+            f"The distribution is **strongly left-skewed** (skew {skew:+.2f}), with a tail of unusually fast shots. "
+            f"This is less common and may indicate sensor anomalies, double-counting, or a sub-group "
+            f"of shots where the press was running ahead of its normal rhythm (e.g. after a reset or "
+            f"during a light-material batch)."
+        )
+    elif left_mod:
+        shape_para = (
+            f"The distribution shows a **mild left skew** (skew {skew:+.2f}), meaning a small proportion "
+            f"of shots completed faster than the normal peak. This is usually benign but worth confirming "
+            f"it does not reflect sensor or data recording artefacts."
+        )
+    else:
+        shape_para = (
+            f"The distribution is **approximately symmetric** (skew {skew:+.2f}), centred around "
+            f"{mean_ct:.2f}s. This is the hallmark of a stable, well-controlled process — "
+            f"the tool is running consistently at its natural rhythm."
+        )
+
+    lines.append(shape_para)
+    lines.append(f"Consistency is **{consistency}**. {tol_msg}")
+
+    if multi_run:
+        spread = mode_max - mode_min
+        if spread > 2.0:
+            lines.append(
+                f"The mode CT drifted **{spread:.2f}s** across {n_runs} runs ({mode_min:.2f}s → {mode_max:.2f}s), "
+                f"which is significant. Each run had a different natural rhythm — this could reflect "
+                f"tool wear over the shift, material variation between batches, or different operators/settings."
+            )
+        else:
+            lines.append(
+                f"Across {n_runs} runs the mode CT varied by only {spread:.2f}s "
+                f"({mode_min:.2f}s – {mode_max:.2f}s) — a small, acceptable drift."
+            )
+
+    # ── Reference guide ───────────────────────────────────────────────
+    lines.append("\n**Common distribution shapes and what they mean:**")
+    lines.append(
+        "**Narrow symmetric peak** — process is stable and repeatable; "
+        "the tool is running at a consistent natural rhythm with low variation."
+    )
+    lines.append(
+        "**Right-skewed / long right tail** — occasional slow shots beyond the upper limit; "
+        "typical of lubrication degradation, material drag, or intermittent feeding issues."
+    )
+    lines.append(
+        "**Bimodal (two humps)** — two distinct operating speeds within the same dataset; "
+        "investigate setup changes, material batch switches, or shift handovers."
+    )
+    lines.append(
+        "**Flat / wide spread** — no dominant rhythm; the tool lacks consistency and "
+        "likely has multiple competing sources of variation (tooling, material, setup)."
+    )
+    lines.append(
+        "**Sharp spike at a specific CT** — the tool is extremely consistent (good) "
+        "or stuck in a fixed pattern (check if it is a sensor artefact or physical limit)."
+    )
+
+    return "\n\n".join(lines)
+
+
 def plot_ct_histogram(df):
     """
     Cycle Time Distribution Histogram — all tool types.
@@ -1730,6 +1853,24 @@ def plot_ct_histogram(df):
                                               bordercolor=colour, borderwidth=1,
                                               borderpad=3, yref='paper', y=y_pos, xanchor=xanc))
 
+    # ── KDE curve (numpy only, no scipy) ──────────────────────────────────────
+    kde_data = all_cts_capped.values
+    n_kde    = len(kde_data)
+    std_kde  = float(np.std(kde_data, ddof=1)) if n_kde > 1 else 1.0
+    bw       = max(1.06 * std_kde * n_kde**(-0.2), 0.05)   # Silverman's rule
+    x_kde    = np.linspace(max(0, kde_data.min() - bw * 2),
+                           min(x_cap, kde_data.max() + bw * 2), 400)
+    diff     = x_kde[:, None] - kde_data[None, :]           # (400, n) broadcast
+    kde_y    = np.exp(-0.5 * (diff / bw) ** 2).sum(axis=1)
+    kde_y   /= (n_kde * bw * np.sqrt(2 * np.pi))
+    kde_y   *= n_kde * bin_size                              # scale to count axis
+
+    fig.add_trace(go.Scatter(
+        x=x_kde, y=kde_y, mode='lines', name='Distribution curve',
+        line=dict(color='#E74C3C', width=2.5),
+        hovertemplate='CT: %{x:.2f}s<br>Density: %{y:.1f}<extra>KDE</extra>'
+    ))
+
     fig.update_layout(
         barmode='overlay',
         title=dict(
@@ -1745,7 +1886,81 @@ def plot_ct_histogram(df):
         bargap=0.02,
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
     )
-    st.plotly_chart(fig, width='stretch')
+
+    # ── Layout: chart left (3), analysis panel right (2) ──────────────────────
+    col_chart, col_analysis = st.columns([3, 2])
+    with col_chart:
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col_analysis:
+        # Compute stats for the LLM prompt
+        mean_ct   = float(np.mean(kde_data))
+        median_ct = float(np.median(kde_data))
+        cv_pct    = (std_kde / mean_ct * 100) if mean_ct > 0 else 0
+        # Skewness (Fisher-Pearson)
+        if std_kde > 0 and n_kde > 2:
+            skew = float(np.mean(((kde_data - mean_ct) / std_kde) ** 3))
+        else:
+            skew = 0.0
+        pct_within = (
+            float(((kde_data >= lower_min) & (kde_data <= upper_max)).mean() * 100)
+            if lower_min is not None else None
+        )
+        # Bimodality coefficient (Sarle's b — >0.555 suggests bimodal)
+        if n_kde > 3:
+            kurt = float(np.mean(((kde_data - mean_ct) / std_kde) ** 4)) - 3
+            bmc  = (skew**2 + 1) / (kurt + 3 * (n_kde - 1)**2 / ((n_kde - 2) * (n_kde - 3)))
+        else:
+            bmc = 0.0
+
+        if   skew >  1.0: shape_desc = "strongly right-skewed (long tail of slow shots)"
+        elif skew >  0.5: shape_desc = "moderately right-skewed"
+        elif skew < -1.0: shape_desc = "strongly left-skewed (long tail of fast shots)"
+        elif skew < -0.5: shape_desc = "moderately left-skewed"
+        else:             shape_desc = "approximately symmetric"
+        if bmc > 0.555:   shape_desc += ", with possible bimodal characteristics"
+
+        prompt_lines = [
+            f"Tool cycle time distribution analysis.",
+            f"Shots: {n_total}, Runs: {len(run_modes)}",
+            f"Mean CT: {mean_ct:.2f}s, Median: {median_ct:.2f}s, Std Dev: {std_kde:.3f}s",
+            f"Coefficient of variation: {cv_pct:.1f}%",
+            f"Skewness: {skew:.3f} — shape: {shape_desc}",
+            f"Bimodality coefficient: {bmc:.3f} (>0.555 = bimodal risk)",
+        ]
+        if multi_run:
+            prompt_lines.append(
+                f"Multi-run: {len(run_modes)} runs, mode CT range {mode_min:.2f}s–{mode_max:.2f}s"
+            )
+        if pct_within is not None:
+            prompt_lines.append(
+                f"% shots within tolerance envelope ({lower_min:.2f}s–{upper_max:.2f}s): {pct_within:.1f}%"
+            )
+
+        data_summary = "\n".join(prompt_lines)
+
+        cache_key = f"ct_hist_analysis_{hash(data_summary)}"
+        if cache_key not in st.session_state:
+            st.session_state[cache_key] = None
+
+        if st.session_state[cache_key] is None:
+            st.session_state[cache_key] = _ct_histogram_analysis(
+                mean_ct=mean_ct, median_ct=median_ct, std=std_kde,
+                cv_pct=cv_pct, skew=skew, bmc=bmc,
+                pct_within=pct_within, n_runs=len(run_modes),
+                multi_run=multi_run, mode_min=mode_min, mode_max=mode_max,
+                lower_min=lower_min, upper_max=upper_max
+            )
+
+        st.markdown("**📈 Distribution Analysis**")
+        st.caption(
+            f"Mean {mean_ct:.2f}s · Median {median_ct:.2f}s · "
+            f"CV {cv_pct:.1f}% · Skew {skew:+.2f}"
+            + (f" · {pct_within:.0f}% within tolerance" if pct_within is not None else "")
+        )
+        st.markdown("---")
+        if st.session_state[cache_key]:
+            st.write(st.session_state[cache_key])
 
 
 def plot_trend_chart(df, x_col, y_col, title, x_title, y_title,
