@@ -1814,10 +1814,24 @@ def prepare_and_generate_run_based_excel(df_for_export, tolerance, downtime_gap_
         df_processed['run_group'] = df_processed['stop_event'].cumsum()
 
         all_runs_data = {}
+
+        # Columns to carry into the export sheet — ordered: hierarchy first,
+        # then shot detail. Formula columns appended separately.
         desired_columns_base = [
-            'SUPPLIER_NAME', 'tool_id', 'SESSION ID', 'shot_time',
-            'APPROVED_CT', 'approved_ct', 'ACTUAL CT',
-            'time_diff_sec', 'stop_flag', 'stop_event', 'run_group'
+            'tool_id',        # → EQUIPMENT_CODE
+            'supplier_name',  # → SUPPLIER
+            'tooling_type',   # → TOOLING TYPE
+            'part_id',        # → PART ID
+            'part_name',      # → PART NAME
+            'SESSION ID',
+            'shot_time',      # → LOCAL_SHOT_TIME
+            'mode_ct',        # → MODE CT (SEC)
+            'approved_ct',    # → APPROVED CT (SEC)
+            'ACTUAL CT',
+            'adj_ct_sec',     # → ADJUSTED CT (SEC)
+            'time_diff_sec',  # → TIME DIFF SEC
+            'stop_flag',      # → STOP
+            'stop_event',     # → STOP EVENT
         ]
         formula_columns = ['CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']
 
@@ -1869,39 +1883,52 @@ def prepare_and_generate_run_based_excel(df_for_export, tolerance, downtime_gap_
                     export_df['first_shot_time_diff'].iloc[0] if not export_df.empty else 0
                 )
 
+                # Compute SPM / SPH per shot for export
+                _ct_vals = pd.to_numeric(export_df['ACTUAL CT'], errors='coerce')
+                export_df['SPM'] = (60.0   / _ct_vals).round(4)
+                export_df['SPH'] = (3600.0 / _ct_vals).round(4)
+
                 export_df['Shot Sequence'] = range(1, len(export_df) + 1)
                 for col in formula_columns:
                     if col not in export_df.columns:
                         export_df[col] = ''
 
-                cols_to_keep = [col for col in desired_columns_base if col in export_df.columns]
-                cols_to_keep_final = (cols_to_keep
-                                      + [col for col in formula_columns if col in export_df.columns])
+                # Keep desired base cols that actually exist + formula cols
+                cols_to_keep = [c for c in desired_columns_base if c in export_df.columns]
+                # Insert SPM/SPH right after ACTUAL CT
+                act_ct_pos = cols_to_keep.index('ACTUAL CT') + 1 if 'ACTUAL CT' in cols_to_keep else len(cols_to_keep)
+                cols_to_keep.insert(act_ct_pos, 'SPM')
+                cols_to_keep.insert(act_ct_pos + 1, 'SPH')
+
+                cols_to_keep_final = cols_to_keep + [c for c in formula_columns if c in export_df.columns]
                 if 'Shot Sequence' in export_df.columns:
-                    cols_to_keep_final.append('Shot Sequence')
+                    cols_to_keep_final.insert(
+                        cols_to_keep_final.index('SESSION ID') + 1
+                        if 'SESSION ID' in cols_to_keep_final else 0,
+                        'Shot Sequence'
+                    )
 
                 final_export_df = export_df[list(dict.fromkeys(cols_to_keep_final))].rename(
                     columns={
-                        'tool_id': 'EQUIPMENT_CODE',
-                        'shot_time': 'LOCAL_SHOT_TIME',
+                        'tool_id':       'EQUIPMENT_CODE',
+                        'supplier_name': 'SUPPLIER',
+                        'tooling_type':  'TOOLING TYPE',
+                        'part_id':       'PART ID',
+                        'part_name':     'PART NAME',
+                        'shot_time':     'LOCAL_SHOT_TIME',
+                        'mode_ct':       'MODE CT (SEC)',
+                        'approved_ct':   'APPROVED CT (SEC)',
+                        'adj_ct_sec':    'ADJUSTED CT (SEC)',
                         'time_diff_sec': 'TIME DIFF SEC',
-                        'stop_flag': 'STOP',
-                        'stop_event': 'STOP EVENT'
+                        'stop_flag':     'STOP',
+                        'stop_event':    'STOP EVENT',
                     }
                 )
 
-                final_desired_renamed = [
-                    'SUPPLIER_NAME', 'EQUIPMENT_CODE', 'SESSION ID', 'Shot Sequence',
-                    'LOCAL_SHOT_TIME', 'APPROVED_CT', 'approved_ct', 'ACTUAL CT',
-                    'TIME DIFF SEC', 'STOP', 'STOP EVENT', 'run_group',
-                    'CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET'
-                ]
-                for col in final_desired_renamed:
+                # Ensure formula placeholder columns exist
+                for col in ['CUMULATIVE COUNT', 'RUN DURATION', 'TIME BUCKET']:
                     if col not in final_export_df.columns:
                         final_export_df[col] = ''
-                final_export_df = final_export_df[
-                    [col for col in final_desired_renamed if col in final_export_df.columns]
-                ]
 
                 run_results['processed_df'] = final_export_df
                 all_runs_data[run_id_val] = run_results
@@ -1987,15 +2014,25 @@ def generate_excel_report(all_runs_data, tolerance):
             ws.write('A3', 'Method', label_format)
             ws.write('B3', 'Every Shot')
 
-            ws.write('E1', 'Mode CT', sub_header_format)
+            # Supplier / Tooling Type from first row of export df if available
+            _supplier = (df_run['SUPPLIER'].iloc[0]
+                         if 'SUPPLIER' in df_run.columns and not df_run.empty else '')
+            _tt = (df_run['TOOLING TYPE'].iloc[0]
+                   if 'TOOLING TYPE' in df_run.columns and not df_run.empty else '')
+            ws.write('A4', 'Supplier', label_format)
+            ws.write('B4', str(_supplier) if _supplier else 'N/A')
+            ws.write('A5', 'Tooling Type', label_format)
+            ws.write('B5', str(_tt) if _tt else 'N/A')
+
+            ws.write('E1', 'Mode CT (sec)', sub_header_format)
             mode_ct_val = data.get('mode_ct', 0)
             ws.write('E2', mode_ct_val if isinstance(mode_ct_val, (int, float)) else 0, secs_format)
 
-            ws.write('F1', 'Outside L1', sub_header_format)
-            ws.write('G1', 'Outside L2', sub_header_format)
+            ws.write('F1', 'Lower Limit', sub_header_format)
+            ws.write('G1', 'Upper Limit', sub_header_format)
             ws.write('H1', 'IDLE', sub_header_format)
-            ws.write('F2', 'Lower Limit', label_format)
-            ws.write('G2', 'Upper Limit', label_format)
+            ws.write('F2', 'Lower Limit (sec)', label_format)
+            ws.write('G2', 'Upper Limit (sec)', label_format)
             ws.write('H2', 'Stops', label_format)
 
             lower_limit_val = data.get('lower_limit')
@@ -2118,7 +2155,9 @@ def generate_excel_report(all_runs_data, tolerance):
                         else:
                             ws.write_blank(current_row_excel_idx, c_idx, None, cell_format)
                     elif isinstance(value, (int, float, np.number)):
-                        if col_name in ['ACTUAL CT', 'adj_ct_sec']:
+                        if col_name in ['ACTUAL CT', 'ADJUSTED CT (SEC)',
+                                        'MODE CT (SEC)', 'APPROVED CT (SEC)',
+                                        'TIME DIFF SEC']:
                             cell_format = secs_format
                         if pd.notna(value) and np.isfinite(value):
                             ws.write_number(current_row_excel_idx, c_idx, value, cell_format)

@@ -962,23 +962,83 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         rr_utils.plot_ct_histogram(results['processed_df'])
 
     with st.expander("View Shot Data Table", expanded=False):
-        cols_to_show = ['shot_time', 'ACTUAL CT', 'adj_ct_sec',
-                        'time_diff_sec', 'stop_flag', 'stop_event']
-        rename_map = {
-            'shot_time': 'Date / Time', 'ACTUAL CT': 'Actual CT (sec)',
-            'approved_ct': 'Approved CT', 'adj_ct_sec': 'Adjusted CT (sec)',
-            'time_diff_sec': 'Time Difference (sec)',
-            'stop_flag': 'Stop Flag', 'stop_event': 'Stop Event'
-        }
-        if show_approved_ct and 'approved_ct' in results['processed_df'].columns:
-            cols_to_show.insert(1, 'approved_ct')
-        if 'run_label' in results['processed_df'].columns:
-            cols_to_show.append('run_label')
-            rename_map['run_label'] = 'Run ID'
+        _df_src = results['processed_df']
+        _pm = press_mode
 
-        df_shot_data = results['processed_df'][cols_to_show].copy()
-        df_shot_data.rename(columns=rename_map, inplace=True)
-        st.dataframe(df_shot_data)
+        # Build column list — hierarchy first, then shot detail
+        _shot_cols  = []
+        _shot_names = {}
+
+        # Hierarchy columns (if present in data)
+        for _col, _lbl in [
+            ('tool_id',       'Tooling ID'),
+            ('supplier_name', 'Supplier'),
+            ('tooling_type',  'Tooling Type'),
+            ('part_id',       'Part(s)'),
+        ]:
+            if _col in _df_src.columns:
+                _shot_cols.append(_col)
+                _shot_names[_col] = _lbl
+
+        # Run ID
+        if 'run_label' in _df_src.columns:
+            _shot_cols.append('run_label')
+            _shot_names['run_label'] = 'Run ID'
+
+        # Core shot columns
+        _shot_cols  += ['shot_time', 'mode_ct', 'ACTUAL CT', 'adj_ct_sec']
+        _shot_names.update({
+            'shot_time':  'Date / Time',
+            'mode_ct':    'Mode CT (sec)',
+            'ACTUAL CT':  'Actual CT (sec)',
+            'adj_ct_sec': 'Adjusted CT (sec)',
+        })
+
+        if show_approved_ct and 'approved_ct' in _df_src.columns:
+            _shot_cols.append('approved_ct')
+            _shot_names['approved_ct'] = 'Approved CT (sec)'
+
+        _shot_cols += ['time_diff_sec', 'stop_flag', 'stop_event']
+        _shot_names.update({
+            'time_diff_sec': 'Time Difference (sec)',
+            'stop_flag':     'Stop Flag',
+            'stop_event':    'Stop Event',
+        })
+
+        _existing = [c for c in _shot_cols if c in _df_src.columns]
+        df_shot_data = _df_src[_existing].copy()
+
+        # Compute SPM / SPH from ACTUAL CT
+        if 'ACTUAL CT' in df_shot_data.columns:
+            _ct = pd.to_numeric(df_shot_data['ACTUAL CT'], errors='coerce')
+            df_shot_data['SPM'] = (60.0  / _ct).round(4)
+            df_shot_data['SPH'] = (3600.0 / _ct).round(4)
+
+        df_shot_data.rename(columns=_shot_names, inplace=True)
+
+        # Press mode: rename Shot → Stroke in displayed labels
+        if _pm:
+            df_shot_data.rename(columns={
+                'Stop Flag':  'Stop Flag',
+                'Stop Event': 'Stop Event',
+            }, inplace=True)
+
+        # UI display: format to 2dp consistently (full values preserved in df_shot_data for download)
+        _fmt_shot = {c: '{:.2f}' for c in ['Actual CT (sec)', 'Adjusted CT (sec)',
+                                             'Approved CT (sec)', 'Mode CT (sec)',
+                                             'Time Difference (sec)', 'SPM', 'SPH']
+                     if c in df_shot_data.columns}
+
+        st.dataframe(df_shot_data.style.format(_fmt_shot, na_rep='—'), use_container_width=True)
+
+        # CSV download — full precision, no formatting
+        st.download_button(
+            "📥 Download Shot Data (CSV)",
+            data=df_shot_data.to_csv(index=False),
+            file_name=f"shot_data_{tool_id_selection.replace(' ', '_')}.csv",
+            mime="text/csv",
+            key="rr_shot_csv"
+        )
 
     st.markdown("---")
 
@@ -1019,6 +1079,9 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         with st.expander("View Run Breakdown Table", expanded=True):
             if run_summary_df is not None and not run_summary_df.empty:
                 d_df = run_summary_df.copy()
+                _pm = press_mode
+                _shot_lbl   = 'Strokes' if _pm else 'Shots'
+
                 d_df["Period (date/time from to)"] = d_df.apply(
                     lambda r: (f"{r['start_time'].strftime('%Y-%m-%d %H:%M')} to "
                                f"{r['end_time'].strftime('%Y-%m-%d %H:%M')}"),
@@ -1027,9 +1090,9 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
 
                 total_shots_col = ('Total Shots' if 'Total Shots' in d_df.columns
                                    else 'total_shots')
-                d_df["Total shots"] = d_df[total_shots_col].apply(lambda x: f"{x:,}")
+                d_df[f"Total {_shot_lbl}"] = d_df[total_shots_col].apply(lambda x: f"{x:,}")
 
-                d_df["Normal Shots"] = d_df.apply(
+                d_df[f"Normal {_shot_lbl}"] = d_df.apply(
                     lambda r: (
                         f"{r['normal_shots']:,} "
                         f"({r['normal_shots'] / r[total_shots_col] * 100:.1f}%)"
@@ -1068,9 +1131,9 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 )
 
                 col_rename = {
-                    'run_label': 'RUN ID', 'mode_ct': 'Mode CT (for the run)',
-                    'lower_limit': 'Lower limit CT (sec)',
-                    'upper_limit': 'Upper Limit CT (sec)',
+                    'run_label': 'RUN ID', 'mode_ct': 'Mode CT (sec)',
+                    'lower_limit': 'Lower Limit (sec)',
+                    'upper_limit': 'Upper Limit (sec)',
                     'mttr_min': 'MTTR (min)', 'mtbf_min': 'MTBF (min)',
                     'stability_index': 'Stability (%)', 'stops': 'STOPS',
                     'MTTR (min)': 'MTTR (min)', 'MTBF (min)': 'MTBF (min)',
@@ -1078,31 +1141,30 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 }
                 approved_key = ('Approved CT' if 'Approved CT' in d_df.columns
                                 else 'approved_ct')
-                col_rename[approved_key] = 'Approved CT'
+                col_rename[approved_key] = 'Approved CT (sec)'
                 d_df.rename(columns=col_rename, inplace=True)
 
                 final_cols = [
-                    'RUN ID', 'Period (date/time from to)', 'Total shots',
-                    'Normal Shots', 'Stop Events', 'Mode CT (for the run)',
-                    'Approved CT', 'Lower limit CT (sec)', 'Upper Limit CT (sec)',
+                    'RUN ID', 'Period (date/time from to)',
+                    f'Total {_shot_lbl}', f'Normal {_shot_lbl}', 'Stop Events',
+                    'Mode CT (sec)', 'Approved CT (sec)',
+                    'Lower Limit (sec)', 'Upper Limit (sec)',
                     'Total Run duration (d/h/m)', 'Production Time (d/h/m)',
                     'Downtime (d/h/m)', 'MTTR (min)', 'MTBF (min)', 'Stability (%)'
                 ]
-                if not show_approved_ct and 'Approved CT' in final_cols:
-                    final_cols.remove('Approved CT')
+                if not show_approved_ct and 'Approved CT (sec)' in final_cols:
+                    final_cols.remove('Approved CT (sec)')
                 final_cols = [c for c in final_cols if c in d_df.columns]
 
-                fmt = {}
-                for col, fmtstr in [
-                    ('Mode CT (for the run)', '{:.2f}'), ('Approved CT', '{:.2f}'),
-                    ('Lower limit CT (sec)', '{:.2f}'), ('Upper Limit CT (sec)', '{:.2f}'),
-                    ('MTTR (min)', '{:.1f}'), ('MTBF (min)', '{:.1f}'),
-                    ('Stability (%)', '{:.1f}'),
-                ]:
-                    if col in d_df.columns:
-                        fmt[col] = fmtstr
+                # Item 4: consistent 2dp for all numeric columns
+                fmt = {c: '{:.2f}' for c in [
+                    'Mode CT (sec)', 'Approved CT (sec)',
+                    'Lower Limit (sec)', 'Upper Limit (sec)',
+                    'MTTR (min)', 'MTBF (min)', 'Stability (%)'
+                ] if c in d_df.columns}
 
-                st.dataframe(d_df[final_cols].style.format(fmt), width='stretch')
+                st.dataframe(d_df[final_cols].style.format(fmt, na_rep='—'),
+                             use_container_width=True)
 
         c1, c2 = st.columns(2)
         with c1:
