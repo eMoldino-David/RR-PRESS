@@ -1631,75 +1631,167 @@ def plot_ct_histogram(df):
         They are still included in all stability metrics.
         """)
 
-    bin_size = max(0.2, mode_ct_val * 0.05) if mode_ct_val else 0.5
+    bin_size = max(0.1, mode_ct_val * 0.02) if mode_ct_val else 0.5
     fig = go.Figure()
     fig.add_trace(go.Histogram(
         x=normal, name='Normal Strokes',
-        marker_color='rgba(52, 152, 219, 0.7)',
-        xbins=dict(size=bin_size)
+        marker_color='rgba(52, 152, 219, 0.75)',
+        marker_line=dict(color='rgba(52, 152, 219, 1.0)', width=0.5),
+        xbins=dict(size=bin_size),
+        hovertemplate='CT: %{x:.2f}s<br>Count: %{y}<extra>Normal</extra>'
     ))
     if not stopped.empty:
         fig.add_trace(go.Histogram(
             x=stopped, name='Stopped Strokes',
-            marker_color='rgba(255, 105, 97, 0.7)',
-            xbins=dict(size=bin_size)
+            marker_color='rgba(255, 105, 97, 0.65)',
+            marker_line=dict(color='rgba(255, 105, 97, 1.0)', width=0.5),
+            xbins=dict(size=bin_size),
+            hovertemplate='CT: %{x:.2f}s<br>Count: %{y}<extra>Stopped</extra>'
         ))
-    for val, lbl, colour, dash in [
-        (mode_ct_val, f'Mode CT ({mode_ct_val:.2f}s)', '#FFFFFF', 'solid'),
-        (lower_lim,   f'Lower ({lower_lim:.2f}s)' if lower_lim else None,
-         PASTEL_COLORS['orange'], 'dash'),
-        (upper_lim,   f'Upper ({upper_lim:.2f}s)' if upper_lim else None,
-         PASTEL_COLORS['orange'], 'dash'),
-    ]:
-        if val is not None and lbl is not None:
-            fig.add_vline(x=val, line_dash=dash, line_color=colour, line_width=2,
-                          annotation_text=lbl, annotation_position='top right',
-                          annotation_font_color=colour)
-    fig.update_layout(
-        barmode='overlay',
-        title=f'Cycle Time Distribution (capped at {x_cap:.0f}s)',
-        xaxis_title='Cycle Time (sec)', yaxis_title='Frequency',
-        xaxis=dict(range=[0, x_cap]),
-        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1)
-    )
-    st.plotly_chart(fig, width='stretch')
-    marker_config = {}
 
-    if y_col not in df.columns:
-        return
-    plot_df = df.dropna(subset=[y_col])
-    if plot_df.empty:
-        return
+    # Vertical reference lines — stagger annotation positions to avoid overlap
+    vlines = [
+        (mode_ct_val, f'Mode {mode_ct_val:.2f}s', '#FFFFFF', 'solid', 'top left'),
+    ]
+    if lower_lim:
+        vlines.append((lower_lim, f'Lower {lower_lim:.2f}s', PASTEL_COLORS['orange'], 'dash', 'bottom right'))
+    if upper_lim:
+        vlines.append((upper_lim, f'Upper {upper_lim:.2f}s', PASTEL_COLORS['orange'], 'dash', 'top right'))
 
-    if is_stability:
-        marker_config['color'] = [
-            PASTEL_COLORS['red'] if v <= 50
-            else PASTEL_COLORS['orange'] if v <= 70
-            else PASTEL_COLORS['green']
-            for v in plot_df[y_col]
-        ]
-        marker_config['size'] = 10
-
-    fig.add_trace(go.Scatter(
-        x=plot_df[x_col], y=plot_df[y_col], mode="lines+markers",
-        name=y_title,
-        line=dict(color="black" if is_stability else "royalblue", width=2),
-        marker=marker_config
-    ))
-    if is_stability:
-        for y0, y1, c in [(0, 50, PASTEL_COLORS['red']),
-                          (50, 70, PASTEL_COLORS['orange']),
-                          (70, 100, PASTEL_COLORS['green'])]:
-            fig.add_shape(
-                type="rect", xref="paper", x0=0, x1=1, y0=y0, y1=y1,
-                fillcolor=c, opacity=0.2, line_width=0, layer="below"
+    for val, lbl, colour, dash, pos in vlines:
+        if val is not None:
+            fig.add_vline(
+                x=val, line_dash=dash, line_color=colour, line_width=1.5,
+                annotation=dict(
+                    text=lbl, font=dict(color=colour, size=11),
+                    bgcolor='rgba(14,17,23,0.75)', borderpad=3,
+                    yref='paper', y=0.97 if 'top' in pos else 0.05,
+                    xanchor='left' if 'left' in pos else 'right'
+                )
             )
 
     fig.update_layout(
-        title=title,
-        yaxis=dict(title=y_title, range=y_range),
-        xaxis_title=x_title.title(),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        barmode='overlay',
+        title=dict(
+            text=f'Cycle Time Distribution — {len(normal)+len(stopped):,} shots '
+                 f'(capped at {x_cap:.0f}s, {n_excluded} excluded)',
+            font=dict(size=14)
+        ),
+        xaxis_title='Cycle Time (sec)',
+        yaxis_title='Shot Count',
+        xaxis=dict(range=[0, x_cap], showgrid=True, gridcolor='rgba(255,255,255,0.08)'),
+        yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.08)'),
+        bargap=0.02,
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
+    )
+    st.plotly_chart(fig, width='stretch')
+
+
+def plot_cusum_chart(df):
+    """
+    CUSUM (Cumulative Sum) control chart on normal-stroke cycle times.
+    Detects sustained process shifts (tool wear, material drift) that an
+    X-MR chart misses because CUSUM accumulates small deviations over time.
+
+    Uses a two-sided tabular CUSUM with k=0.5σ slack and h=5σ decision limit,
+    which are the industry-standard parameters for detecting ±1σ mean shifts.
+    """
+    if df.empty:
+        return
+
+    normal = df[df['stop_flag'] == 0]['ACTUAL CT'].dropna()
+    if len(normal) < 10:
+        st.info("Not enough normal strokes for a CUSUM chart (need ≥ 10).")
+        return
+
+    mu    = float(normal.mean())
+    sigma = float(normal.std(ddof=1)) if len(normal) > 1 else 0.0
+    if sigma == 0:
+        st.info("Zero variance in cycle times — CUSUM chart not meaningful.")
+        return
+
+    k = 0.5 * sigma   # allowance (slack)
+    h = 5.0 * sigma   # decision limit
+
+    vals   = normal.values
+    times  = df[df['stop_flag'] == 0]['shot_time'].dropna().values[:len(vals)]
+    c_pos  = np.zeros(len(vals))
+    c_neg  = np.zeros(len(vals))
+    for i in range(1, len(vals)):
+        c_pos[i] = max(0, c_pos[i-1] + (vals[i] - mu) - k)
+        c_neg[i] = max(0, c_neg[i-1] - (vals[i] - mu) - k)
+
+    signal_up   = c_pos > h
+    signal_down = c_neg > h
+
+    with st.expander("ℹ️ How to read this chart", expanded=False):
+        st.markdown(f"""
+        **What it shows:** Cumulative deviation of each normal stroke's CT from the
+        process mean ({mu:.2f}s). Small persistent shifts accumulate and cross the
+        decision limit (h = {h:.2f}s) long before they'd be visible on a raw CT chart.
+
+        **C⁺ (orange)** accumulates upward drift → press slowing down (tool wear, drag).
+        **C⁻ (cyan)** accumulates downward drift → press speeding up (lighter material, over-lubrication).
+
+        **Red dashed line** = decision limit (h = 5σ = {h:.2f}s). A signal crossing
+        this line means a statistically significant shift has occurred and warrants investigation.
+
+        **Why CUSUM for press tools?** Tool wear and material thickness variation cause
+        gradual CT drift — exactly the pattern CUSUM is designed to catch early.
+        """)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=times, y=c_pos, name='C⁺ (upward drift)',
+        mode='lines', line=dict(color='#F39C12', width=1.5),
+        hovertemplate='%{x}<br>C⁺: %{y:.3f}s<extra></extra>'
+    ))
+    fig.add_trace(go.Scatter(
+        x=times, y=c_neg, name='C⁻ (downward drift)',
+        mode='lines', line=dict(color='#1ABC9C', width=1.5),
+        hovertemplate='%{x}<br>C⁻: %{y:.3f}s<extra></extra>'
+    ))
+
+    # Decision limit band
+    fig.add_hline(y=h, line_dash='dash', line_color='rgba(231,76,60,0.8)', line_width=1.5,
+                  annotation=dict(text=f'Decision limit h={h:.2f}s',
+                                  font=dict(color='rgba(231,76,60,1)', size=11),
+                                  bgcolor='rgba(14,17,23,0.75)', borderpad=3,
+                                  xanchor='left'))
+
+    # Shade signal regions
+    for i, (sig, col) in enumerate([(signal_up, 'rgba(243,156,18,0.15)'),
+                                     (signal_down, 'rgba(26,188,156,0.15)')]):
+        in_signal = False
+        seg_start = None
+        for j, s in enumerate(sig):
+            if s and not in_signal:
+                in_signal = True
+                seg_start = times[j]
+            elif not s and in_signal:
+                in_signal = False
+                fig.add_vrect(x0=seg_start, x1=times[j-1],
+                              fillcolor=col, layer='below', line_width=0)
+        if in_signal:
+            fig.add_vrect(x0=seg_start, x1=times[-1],
+                          fillcolor=col, layer='below', line_width=0)
+
+    n_signals = int(signal_up.sum() > 0) + int(signal_down.sum() > 0)
+    fig.update_layout(
+        title=dict(
+            text=f'CUSUM Control Chart — μ={mu:.2f}s, σ={sigma:.3f}s'
+                 + (f' — ⚠️ {n_signals} signal region(s) detected' if n_signals else ' — ✅ No signals'),
+            font=dict(size=14)
+        ),
+        xaxis_title='Shot Time',
+        yaxis_title='Cumulative Sum (sec)',
+        xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.08)'),
+        yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.08)', rangemode='tozero'),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        paper_bgcolor='rgba(0,0,0,0)',
+        plot_bgcolor='rgba(0,0,0,0)',
     )
     st.plotly_chart(fig, width='stretch')
 

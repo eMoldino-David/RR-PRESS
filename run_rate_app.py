@@ -953,37 +953,13 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         )
         st.markdown("---")
 
-        # ── Chart 3: Cumulative Strokes vs Ideal ──────────────────────────────
-        st.markdown("#### 📊 Chart 3 — Cumulative Strokes vs Ideal Production")
-        rr_utils.plot_cumulative_strokes(results['processed_df'], stroke_unit)
+        # ── Chart 3: CUSUM Control Chart ──────────────────────────────────────
+        st.markdown("#### 📊 Chart 3 — CUSUM Control Chart")
+        rr_utils.plot_cusum_chart(results['processed_df'])
         st.markdown("---")
 
-        # ── Chart 4: Rolling Average ───────────────────────────────────────────
-        st.markdown(f"#### 📊 Chart 4 — Rolling Average Stroke Rate ({stroke_unit})")
-        _roll_window = st.slider(
-            "Rolling window (periods)", 2, 30, 5, key="rr_roll_window",
-            help=f"Number of {'minutes' if stroke_unit == 'SPM' else 'hours'} to average over"
-        )
-        rr_utils.plot_rolling_spm(results['processed_df'], stroke_unit, _roll_window)
-        st.markdown("---")
-
-        # ── Chart 5: SPC X-MR ─────────────────────────────────────────────────
-        st.markdown("#### 📊 Chart 5 — SPC Control Chart (X-MR)")
-        rr_utils.plot_spc_control_chart(results['processed_df'])
-        st.markdown("---")
-
-        # ── Chart 6: Stoppage Pareto ───────────────────────────────────────────
-        st.markdown("#### 📊 Chart 6 — Stoppage Pareto (Duration × Frequency)")
-        rr_utils.plot_stoppage_pareto(results['processed_df'])
-        st.markdown("---")
-
-        # ── Chart 7: Inter-stroke Gap Distribution ────────────────────────────
-        st.markdown("#### 📊 Chart 7 — Inter-stroke Gap Distribution")
-        rr_utils.plot_interstroke_gap(results['processed_df'])
-        st.markdown("---")
-
-        # ── Chart 8: CT Histogram ──────────────────────────────────────────────
-        st.markdown("#### 📊 Chart 8 — Cycle Time Distribution")
+        # ── Chart 4: CT Histogram ──────────────────────────────────────────────
+        st.markdown("#### 📊 Chart 4 — Cycle Time Distribution")
         rr_utils.plot_ct_histogram(results['processed_df'])
     else:
         rr_utils.plot_shot_bar_chart(
