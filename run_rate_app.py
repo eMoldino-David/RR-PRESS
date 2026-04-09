@@ -855,6 +855,17 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                     st.metric(_lbl_mode, _fmt_mode)
             c3.metric(_lbl_c3, _fmt_upper)
 
+    # Always show raw Mode CT (sec) as a reference when displaying in rate units,
+    # since all calculations are derived from CT not the converted rate value.
+    if _convert:
+        _raw_mode  = fmt_metric(_mode_lo, _mode_hi, to_spm=False)
+        _raw_lower = fmt_metric(_low_lo,  _low_hi,  to_spm=False)
+        _raw_upper = fmt_metric(_up_lo,   _up_hi,   to_spm=False)
+        st.caption(
+            f"ℹ️ Calculation reference (CT seconds) — "
+            f"Lower: **{_raw_lower}s** · Mode: **{_raw_mode}s** · Upper: **{_raw_upper}s**"
+        )
+
     # ------------------------------------------------------------------
     # Automated analysis expander
     # ------------------------------------------------------------------
