@@ -1619,120 +1619,82 @@ def _ct_histogram_analysis(mean_ct, median_ct, std, cv_pct, skew, bmc,
                            pct_within, n_runs, multi_run,
                            mode_min, mode_max, lower_min, upper_max):
     """
-    Rule-based distribution shape analysis — no external API required.
-    Returns a formatted string describing this specific distribution and
-    a reference guide for common patterns.
+    Rule-based distribution shape analysis — concise, no external API.
     """
-    lines = []
+    parts = []
 
-    # ── Shape classification ───────────────────────────────────────────
-    bimodal      = bmc > 0.555
-    right_strong = skew > 1.0
-    right_mod    = 0.4 < skew <= 1.0
-    left_strong  = skew < -1.0
-    left_mod     = -1.0 <= skew < -0.4
-    symmetric    = abs(skew) <= 0.4
+    # ── Shape ─────────────────────────────────────────────────────────
+    # Bimodality only meaningful if peaks are separated (high CV implies real spread)
+    bimodal_significant = bmc > 0.555 and cv_pct > 10
+    bimodal_minor       = bmc > 0.555 and cv_pct <= 10
 
-    # ── Consistency rating ─────────────────────────────────────────────
-    if   cv_pct < 3:   consistency = "excellent (CV < 3%)"
-    elif cv_pct < 6:   consistency = "good (CV 3–6%)"
-    elif cv_pct < 12:  consistency = "moderate (CV 6–12%)"
-    else:              consistency = "poor (CV > 12%) — high variation"
-
-    # ── Tolerance performance ──────────────────────────────────────────
-    if pct_within is not None:
-        if   pct_within >= 98: tol_msg = f"{pct_within:.1f}% of shots are within the tolerance envelope — the process is well-contained."
-        elif pct_within >= 90: tol_msg = f"{pct_within:.1f}% within tolerance — generally good, but the tail of slow shots warrants attention."
-        elif pct_within >= 75: tol_msg = f"Only {pct_within:.1f}% within tolerance — a significant proportion of shots are outside the normal zone."
-        else:                   tol_msg = f"Only {pct_within:.1f}% within tolerance — the process is poorly controlled and needs investigation."
-    else:
-        tol_msg = ""
-
-    # ── This distribution paragraph ───────────────────────────────────
-    if bimodal:
-        shape_para = (
-            f"This distribution shows signs of **bimodality** (bimodality coefficient {bmc:.2f}), "
-            f"meaning the tool is running at two distinct cycle times rather than one consistent rhythm. "
-            f"This typically indicates a setup change, material batch switch, operator intervention, "
-            f"or a recurring fault that temporarily shifts the process to a different speed. "
-            f"Investigate whether the two peaks correspond to different shifts, materials, or run segments."
+    if bimodal_significant:
+        parts.append(
+            f"Distribution suggests **two distinct operating speeds** (BMC {bmc:.2f}). "
+            f"Check for setup changes, material batches, or shift handovers within this period."
         )
-    elif right_strong:
-        shape_para = (
-            f"The distribution is **strongly right-skewed** (skew {skew:+.2f}), with a long tail of slow shots "
-            f"pulling the mean ({mean_ct:.2f}s) above the median ({median_ct:.2f}s). "
-            f"This pattern is typical of a tool experiencing progressive drag, lubrication breakdown, "
-            f"material feeding issues, or intermittent jams that resolve without a full stop. "
-            f"The slow-shot tail is where downtime risk is accumulating."
+    elif bimodal_minor:
+        parts.append(
+            f"Slight bimodality detected (BMC {bmc:.2f}) but cycle times are close together — "
+            f"likely natural variation around the mode rather than a true process split."
         )
-    elif right_mod:
-        shape_para = (
-            f"The distribution has a **moderate right skew** (skew {skew:+.2f}), indicating occasional slow shots "
-            f"beyond the normal rhythm. The mean ({mean_ct:.2f}s) sits slightly above the median ({median_ct:.2f}s). "
-            f"This is common when the tool occasionally hesitates — check lubrication intervals, "
-            f"material consistency, and whether slow shots cluster at a particular time of shift."
+    elif skew > 1.0:
+        parts.append(
+            f"**Strong right skew** (skew {skew:+.2f}) — a tail of slow shots is pulling the "
+            f"mean ({mean_ct:.1f}s) above the median ({median_ct:.1f}s). "
+            f"Likely cause: lubrication, material drag, or intermittent feeding issues."
         )
-    elif left_strong:
-        shape_para = (
-            f"The distribution is **strongly left-skewed** (skew {skew:+.2f}), with a tail of unusually fast shots. "
-            f"This is less common and may indicate sensor anomalies, double-counting, or a sub-group "
-            f"of shots where the press was running ahead of its normal rhythm (e.g. after a reset or "
-            f"during a light-material batch)."
+    elif skew > 0.4:
+        parts.append(
+            f"**Moderate right skew** (skew {skew:+.2f}) — occasional slow shots beyond normal rhythm. "
+            f"Mean {mean_ct:.1f}s vs median {median_ct:.1f}s."
         )
-    elif left_mod:
-        shape_para = (
-            f"The distribution shows a **mild left skew** (skew {skew:+.2f}), meaning a small proportion "
-            f"of shots completed faster than the normal peak. This is usually benign but worth confirming "
-            f"it does not reflect sensor or data recording artefacts."
+    elif abs(skew) <= 0.4:
+        parts.append(
+            f"**Symmetric distribution** (skew {skew:+.2f}) — the tool is running at a "
+            f"consistent rhythm centred around {mean_ct:.1f}s."
         )
     else:
-        shape_para = (
-            f"The distribution is **approximately symmetric** (skew {skew:+.2f}), centred around "
-            f"{mean_ct:.2f}s. This is the hallmark of a stable, well-controlled process — "
-            f"the tool is running consistently at its natural rhythm."
-        )
+        parts.append(f"Distribution skew: {skew:+.2f} (mean {mean_ct:.1f}s, median {median_ct:.1f}s).")
 
-    lines.append(shape_para)
-    lines.append(f"Consistency is **{consistency}**. {tol_msg}")
+    # ── Consistency + tolerance in one line ───────────────────────────
+    if   cv_pct < 3:   cons = "excellent consistency (CV < 3%)"
+    elif cv_pct < 6:   cons = "good consistency (CV 3–6%)"
+    elif cv_pct < 12:  cons = "moderate variation (CV 6–12%)"
+    else:              cons = "**high variation** (CV > 12%)"
 
-    if multi_run:
+    tol_part = (f", {pct_within:.0f}% within tolerance" if pct_within is not None else "")
+    parts.append(f"Process shows {cons}{tol_part}.")
+
+    # ── Multi-run drift — only flag if meaningful relative to mean ────
+    if multi_run and n_runs > 1:
         spread = mode_max - mode_min
-        if spread > 2.0:
-            lines.append(
-                f"The mode CT drifted **{spread:.2f}s** across {n_runs} runs ({mode_min:.2f}s → {mode_max:.2f}s), "
-                f"which is significant. Each run had a different natural rhythm — this could reflect "
-                f"tool wear over the shift, material variation between batches, or different operators/settings."
+        spread_pct = (spread / mean_ct * 100) if mean_ct > 0 else 0
+        if spread_pct > 20:
+            parts.append(
+                f"Mode CT varied by {spread:.1f}s across {n_runs} runs "
+                f"({mode_min:.1f}s → {mode_max:.1f}s, {spread_pct:.0f}% of mean) — "
+                f"significant drift suggesting tool wear or batch variation."
             )
-        else:
-            lines.append(
-                f"Across {n_runs} runs the mode CT varied by only {spread:.2f}s "
-                f"({mode_min:.2f}s – {mode_max:.2f}s) — a small, acceptable drift."
+        elif spread_pct > 5:
+            parts.append(
+                f"Mode CT drifted {spread:.1f}s across {n_runs} runs "
+                f"({mode_min:.1f}s → {mode_max:.1f}s) — minor, worth monitoring."
             )
 
-    # ── Reference guide ───────────────────────────────────────────────
-    lines.append("\n**Common distribution shapes and what they mean:**")
-    lines.append(
-        "**Narrow symmetric peak** — process is stable and repeatable; "
-        "the tool is running at a consistent natural rhythm with low variation."
-    )
-    lines.append(
-        "**Right-skewed / long right tail** — occasional slow shots beyond the upper limit; "
-        "typical of lubrication degradation, material drag, or intermittent feeding issues."
-    )
-    lines.append(
-        "**Bimodal (two humps)** — two distinct operating speeds within the same dataset; "
-        "investigate setup changes, material batch switches, or shift handovers."
-    )
-    lines.append(
-        "**Flat / wide spread** — no dominant rhythm; the tool lacks consistency and "
-        "likely has multiple competing sources of variation (tooling, material, setup)."
-    )
-    lines.append(
-        "**Sharp spike at a specific CT** — the tool is extremely consistent (good) "
-        "or stuck in a fixed pattern (check if it is a sensor artefact or physical limit)."
+    summary = "\n\n".join(parts)
+
+    # ── Compact reference guide ────────────────────────────────────────
+    guide = (
+        "**Shape guide** — "
+        "Narrow peak = stable; "
+        "Right tail = slow shots/drag; "
+        "Two humps = two operating speeds; "
+        "Wide/flat = high variation; "
+        "Sharp spike = very consistent or sensor artefact."
     )
 
-    return "\n\n".join(lines)
+    return summary + "\n\n---\n" + guide
 
 
 def plot_ct_histogram(df):
