@@ -1006,6 +1006,12 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
 
         df_shot_data.rename(columns=_shot_names, inplace=True)
 
+        # Format datetime to milliseconds only (3dp), not microseconds
+        if 'Date / Time' in df_shot_data.columns:
+            df_shot_data['Date / Time'] = pd.to_datetime(
+                df_shot_data['Date / Time']
+            ).dt.strftime('%Y-%m-%d %H:%M:%S.%f').str[:-3]
+
         # UI display: format to 2dp consistently
         _fmt_shot = {c: '{:.2f}' for c in ['Actual CT (sec)', 'Adjusted CT (sec)',
                                              'Approved CT (sec)', 'Mode CT (sec)',
