@@ -1518,30 +1518,48 @@ def run_run_rate_ui():
         st.sidebar.warning("No data for the selected date range.")
         st.stop()
 
-    # 1–6. Cascading hierarchy filters
+    # 1–6. Cascading hierarchy filters — only rendered if the column exists in data
     opts_proj = get_options_multi(df_all, 'project_id')
-    sel_proj  = st.sidebar.multiselect("Project",      opts_proj, default=opts_proj, key="rr_f_project")
-    df_f1     = apply_filter(df_all, 'project_id', sel_proj)
+    if opts_proj:
+        sel_proj = st.sidebar.multiselect("Project", opts_proj, default=opts_proj, key="rr_f_project")
+        df_f1 = apply_filter(df_all, 'project_id', sel_proj)
+    else:
+        df_f1 = df_all
 
-    opts_mat  = get_options_multi(df_f1, 'material')
-    sel_mat   = st.sidebar.multiselect("Material",     opts_mat,  default=opts_mat,  key="rr_f_material")
-    df_f2     = apply_filter(df_f1, 'material', sel_mat)
+    opts_mat = get_options_multi(df_f1, 'material')
+    if opts_mat:
+        sel_mat = st.sidebar.multiselect("Material", opts_mat, default=opts_mat, key="rr_f_material")
+        df_f2 = apply_filter(df_f1, 'material', sel_mat)
+    else:
+        df_f2 = df_f1
 
     opts_part = get_options_multi(df_f2, 'part_id')
-    sel_part  = st.sidebar.multiselect("Part",         opts_part, default=opts_part, key="rr_f_part")
-    df_f3     = apply_filter(df_f2, 'part_id', sel_part)
+    if opts_part:
+        sel_part = st.sidebar.multiselect("Part", opts_part, default=opts_part, key="rr_f_part")
+        df_f3 = apply_filter(df_f2, 'part_id', sel_part)
+    else:
+        df_f3 = df_f2
 
-    opts_sup  = get_options_multi(df_f3, 'supplier_id')
-    sel_sup   = st.sidebar.multiselect("Supplier",     opts_sup,  default=opts_sup,  key="rr_f_supplier")
-    df_f4     = apply_filter(df_f3, 'supplier_id', sel_sup)
+    opts_sup = get_options_multi(df_f3, 'supplier_id')
+    if opts_sup:
+        sel_sup = st.sidebar.multiselect("Supplier", opts_sup, default=opts_sup, key="rr_f_supplier")
+        df_f4 = apply_filter(df_f3, 'supplier_id', sel_sup)
+    else:
+        df_f4 = df_f3
 
-    opts_plt  = get_options_multi(df_f4, 'plant_id')
-    sel_plt   = st.sidebar.multiselect("Plant",        opts_plt,  default=opts_plt,  key="rr_f_plant")
-    df_f5     = apply_filter(df_f4, 'plant_id', sel_plt)
+    opts_plt = get_options_multi(df_f4, 'plant_id')
+    if opts_plt:
+        sel_plt = st.sidebar.multiselect("Plant", opts_plt, default=opts_plt, key="rr_f_plant")
+        df_f5 = apply_filter(df_f4, 'plant_id', sel_plt)
+    else:
+        df_f5 = df_f4
 
-    opts_tt   = get_options_multi(df_f5, 'tooling_type')
-    sel_tt    = st.sidebar.multiselect("Tooling Type", opts_tt,   default=opts_tt,   key="rr_f_tooling_type")
-    df_filtered = apply_filter(df_f5, 'tooling_type', sel_tt)
+    opts_tt = get_options_multi(df_f5, 'tooling_type')
+    if opts_tt:
+        sel_tt = st.sidebar.multiselect("Tooling Type", opts_tt, default=opts_tt, key="rr_f_tooling_type")
+        df_filtered = apply_filter(df_f5, 'tooling_type', sel_tt)
+    else:
+        df_filtered = df_f5
 
     if df_filtered.empty:
         st.sidebar.warning("No data matches the current filters.")
@@ -1600,12 +1618,18 @@ def run_run_rate_ui():
         "Risk Tower uses all tools. Dashboard & Trends use the selection below."
     )
 
+    # If the session state selection contains tools not in current scope
+    # (e.g. after a new file upload or filter change), reset to first tool.
+    _prev = st.session_state.get("rr_tool_select_inline", [])
+    _valid_prev = [t for t in _prev if t in tool_ids]
+    _default = _valid_prev if _valid_prev else tool_ids[:1]
+
     col_sel, col_mode = st.columns([3, 1])
     with col_sel:
         selected_tools = st.multiselect(
             "Select tool(s) for Dashboard & Trends",
             options=tool_ids,
-            default=tool_ids[:1] if tool_ids else [],
+            default=_default,
             key="rr_tool_select_inline"
         )
     with col_mode:
