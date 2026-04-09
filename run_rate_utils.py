@@ -1587,18 +1587,25 @@ def plot_interstroke_gap(df):
 
 def plot_ct_histogram(df):
     """
-    Chart 8 — Cycle Time Distribution Histogram.
-    Caps x-axis at upper_limit * 3 to exclude 999.9 hard-stop sentinel values.
+    Cycle Time Distribution Histogram — available for all tool types.
+    Caps x-axis to exclude 999.9 hard-stop sentinel values.
+    Limit lines derived from the mode of per-shot limit columns so they
+    match the actual stop_flag classification boundary, not just row[0].
     """
     if df.empty:
         return
-    mode_ct_val = _get_stable_mode(df[df['stop_flag'] == 0]['ACTUAL CT'].dropna())
-    lower_lim   = df['lower_limit'].iloc[0] if 'lower_limit' in df.columns else None
-    upper_lim   = df['upper_limit'].iloc[0] if 'upper_limit' in df.columns else None
+    normal_df = df[df['stop_flag'] == 0]
+    mode_ct_val = _get_stable_mode(normal_df['ACTUAL CT'].dropna())
 
-    # Cap to exclude 999.9 sentinel and long-tail outliers
+    # Use mode of limit columns — consistent with how stop_flag was assigned
+    # per-run. iloc[0] is wrong when multiple runs have different mode CTs.
+    lower_lim = (_get_stable_mode(df['lower_limit'].dropna())
+                 if 'lower_limit' in df.columns else None) or None
+    upper_lim = (_get_stable_mode(df['upper_limit'].dropna())
+                 if 'upper_limit' in df.columns else None) or None
+
     x_cap   = (upper_lim * 4) if upper_lim else (mode_ct_val * 6 if mode_ct_val else 200)
-    normal  = df[df['stop_flag'] == 0]['ACTUAL CT'].dropna()
+    normal  = normal_df['ACTUAL CT'].dropna()
     normal  = normal[normal <= x_cap]
     stopped = df[df['stop_flag'] == 1]['ACTUAL CT'].dropna()
     stopped = stopped[stopped <= x_cap]
@@ -1614,21 +1621,21 @@ def plot_ct_histogram(df):
         **What it shows:** Frequency distribution of all cycle times, split into
         normal strokes (blue) and stopped strokes (red).
 
-        **The tall blue peak** around the mode CT ({mode_ct_val:.1f}s) is the press
-        running in its normal rhythm. The tighter this peak, the more consistent
-        the press is.
+        **The tall blue peak** around the mode CT ({mode_ct_val:.2f}s) is the tool
+        running in its normal rhythm. The tighter this peak, the more consistent it is.
 
-        **Stopped strokes (red)** appear to the right — these are shots where the CT
-        exceeded the upper tolerance limit. Their distribution reveals:
-        - A peak just above the upper limit → most stops are brief hesitations
+        **Stopped strokes (red)** appear outside the tolerance band. Their distribution reveals:
+        - A peak just outside the limit → most stops are brief hesitations
         - A spread-out tail → stops vary widely in duration (many different causes)
         - Peaks at specific values → recurring fault types with consistent recovery times
 
-        **Orange lines** = tolerance band. Shots outside this band triggered stop detection.
+        **Orange dashed lines** = tolerance band boundaries. Shots outside this band
+        are classified as stopped. If bars cross the orange line without changing colour,
+        this is normal — it means those shots span a bin that straddles the boundary.
 
         **Note:** {n_excluded} shots with CT > {x_cap:.0f}s (including 999.9s hard-stop
         sentinels) are excluded from this view to prevent the scale being compressed.
-        They are still included in all stability metrics.
+        They are still counted in all stability metrics.
         """)
 
     bin_size = max(0.1, mode_ct_val * 0.02) if mode_ct_val else 0.5
@@ -1649,24 +1656,28 @@ def plot_ct_histogram(df):
             hovertemplate='CT: %{x:.2f}s<br>Count: %{y}<extra>Stopped</extra>'
         ))
 
-    # Vertical reference lines — stagger annotation positions to avoid overlap
+    # Stagger annotation y positions explicitly to prevent overlap.
+    # Mode goes at 97%, Upper at 80%, Lower at 12% of chart height.
     vlines = [
-        (mode_ct_val, f'Mode {mode_ct_val:.2f}s', '#FFFFFF', 'solid', 'top left'),
+        (mode_ct_val, f'Mode {mode_ct_val:.2f}s', '#4A90D9', 'solid',  0.97, 'left'),
     ]
     if lower_lim:
-        vlines.append((lower_lim, f'Lower {lower_lim:.2f}s', PASTEL_COLORS['orange'], 'dash', 'bottom right'))
+        vlines.append((lower_lim, f'Lower {lower_lim:.2f}s',
+                       PASTEL_COLORS['orange'], 'dash', 0.12, 'right'))
     if upper_lim:
-        vlines.append((upper_lim, f'Upper {upper_lim:.2f}s', PASTEL_COLORS['orange'], 'dash', 'top right'))
+        vlines.append((upper_lim, f'Upper {upper_lim:.2f}s',
+                       PASTEL_COLORS['orange'], 'dash', 0.80, 'left'))
 
-    for val, lbl, colour, dash, pos in vlines:
+    for val, lbl, colour, dash, y_pos, xanchor in vlines:
         if val is not None:
             fig.add_vline(
                 x=val, line_dash=dash, line_color=colour, line_width=1.5,
                 annotation=dict(
                     text=lbl, font=dict(color=colour, size=11),
-                    bgcolor='rgba(14,17,23,0.75)', borderpad=3,
-                    yref='paper', y=0.97 if 'top' in pos else 0.05,
-                    xanchor='left' if 'left' in pos else 'right'
+                    bgcolor='rgba(240,240,240,0.85)', borderpad=3,
+                    bordercolor=colour, borderwidth=1,
+                    yref='paper', y=y_pos,
+                    xanchor=xanchor
                 )
             )
 
@@ -1679,12 +1690,10 @@ def plot_ct_histogram(df):
         ),
         xaxis_title='Cycle Time (sec)',
         yaxis_title='Shot Count',
-        xaxis=dict(range=[0, x_cap], showgrid=True, gridcolor='rgba(255,255,255,0.08)'),
-        yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.08)'),
+        xaxis=dict(range=[0, x_cap], showgrid=True),
+        yaxis=dict(showgrid=True),
         bargap=0.02,
         legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
     )
     st.plotly_chart(fig, width='stretch')
 
