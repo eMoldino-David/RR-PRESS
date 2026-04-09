@@ -966,10 +966,16 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
     _stop_label   = "Stopped Stroke" if press_mode else "Stopped Shot"
     _app_label    = "Approved SPM" if press_mode else "Approved CT"
 
+    # Bar width = mode CT in ms so bars tile edge-to-edge at the tool's
+    # natural rhythm and scale correctly on zoom.
+    _bar_w = (int(mode_ct * 1000) if isinstance(mode_ct, (int, float)) and mode_ct > 0
+              else None)
+
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=df['plot_time'], y=df['_y'],
-        marker_color=df['color'], name=_y_label, showlegend=False
+        marker_color=df['color'], name=_y_label, showlegend=False,
+        **({"width": _bar_w} if _bar_w else {})
     ))
     fig.add_trace(go.Bar(x=[None], y=[None], name=_stroke_label,
                          marker_color='#3498DB', showlegend=True))
@@ -1092,15 +1098,21 @@ def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM',
     agg_n = pd.concat(normal_rows,  ignore_index=True)
     agg_s = pd.concat(stopped_rows, ignore_index=True)
 
+    # Width in milliseconds = bucket duration so bars fill the full bucket
+    # and scale correctly when zooming in on the time axis.
+    bar_width_ms = 60_000 if freq == 'min' else 3_600_000
+
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=agg_n['shot_time'], y=agg_n['normal'],
         name='Normal Strokes', marker_color='#3498DB',
+        width=bar_width_ms,
         hovertemplate='%{x}<br>Normal: %{y}<extra></extra>'
     ))
     fig.add_trace(go.Bar(
         x=agg_s['shot_time'], y=agg_s['stopped'],
         name='Stopped Strokes', marker_color=PASTEL_COLORS['red'],
+        width=bar_width_ms,
         hovertemplate='%{x}<br>Stopped: %{y}<extra></extra>'
     ))
 
