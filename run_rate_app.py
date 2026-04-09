@@ -953,8 +953,9 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         )
 
     # CT Histogram — all tool types, collapsed by default
-    with st.expander("📊 Cycle Time Distribution", expanded=False):
-        rr_utils.plot_ct_histogram(results['processed_df'])
+    # CT Histogram — commented out pending further development
+    # with st.expander("📊 Cycle Time Distribution", expanded=False):
+    #     rr_utils.plot_ct_histogram(results['processed_df'])
 
     with st.expander("View Shot Data Table", expanded=False):
         _df_src = results['processed_df']
