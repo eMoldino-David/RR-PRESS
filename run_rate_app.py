@@ -1008,25 +1008,12 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         _existing = [c for c in _shot_cols if c in _df_src.columns]
         df_shot_data = _df_src[_existing].copy()
 
-        # Compute SPM / SPH from ACTUAL CT
-        if 'ACTUAL CT' in df_shot_data.columns:
-            _ct = pd.to_numeric(df_shot_data['ACTUAL CT'], errors='coerce')
-            df_shot_data['SPM'] = (60.0  / _ct).round(4)
-            df_shot_data['SPH'] = (3600.0 / _ct).round(4)
-
         df_shot_data.rename(columns=_shot_names, inplace=True)
 
-        # Press mode: rename Shot → Stroke in displayed labels
-        if _pm:
-            df_shot_data.rename(columns={
-                'Stop Flag':  'Stop Flag',
-                'Stop Event': 'Stop Event',
-            }, inplace=True)
-
-        # UI display: format to 2dp consistently (full values preserved in df_shot_data for download)
+        # UI display: format to 2dp consistently
         _fmt_shot = {c: '{:.2f}' for c in ['Actual CT (sec)', 'Adjusted CT (sec)',
                                              'Approved CT (sec)', 'Mode CT (sec)',
-                                             'Time Difference (sec)', 'SPM', 'SPH']
+                                             'Time Difference (sec)']
                      if c in df_shot_data.columns}
 
         st.dataframe(df_shot_data.style.format(_fmt_shot, na_rep='—'), use_container_width=True)
@@ -1144,10 +1131,17 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 col_rename[approved_key] = 'Approved CT (sec)'
                 d_df.rename(columns=col_rename, inplace=True)
 
+                # Add Mode SPM / SPH derived from Mode CT — only meaningful at run level
+                if 'Mode CT (sec)' in d_df.columns:
+                    _mct = pd.to_numeric(d_df['Mode CT (sec)'], errors='coerce')
+                    d_df['Mode SPM'] = (60.0   / _mct).round(2)
+                    d_df['Mode SPH'] = (3600.0 / _mct).round(2)
+
                 final_cols = [
                     'RUN ID', 'Period (date/time from to)',
                     f'Total {_shot_lbl}', f'Normal {_shot_lbl}', 'Stop Events',
-                    'Mode CT (sec)', 'Approved CT (sec)',
+                    'Mode CT (sec)', 'Mode SPM', 'Mode SPH',
+                    'Approved CT (sec)',
                     'Lower Limit (sec)', 'Upper Limit (sec)',
                     'Total Run duration (d/h/m)', 'Production Time (d/h/m)',
                     'Downtime (d/h/m)', 'MTTR (min)', 'MTBF (min)', 'Stability (%)'
@@ -1158,7 +1152,8 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
 
                 # Item 4: consistent 2dp for all numeric columns
                 fmt = {c: '{:.2f}' for c in [
-                    'Mode CT (sec)', 'Approved CT (sec)',
+                    'Mode CT (sec)', 'Mode SPM', 'Mode SPH',
+                    'Approved CT (sec)',
                     'Lower Limit (sec)', 'Upper Limit (sec)',
                     'MTTR (min)', 'MTBF (min)', 'Stability (%)'
                 ] if c in d_df.columns}

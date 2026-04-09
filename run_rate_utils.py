@@ -1883,11 +1883,6 @@ def prepare_and_generate_run_based_excel(df_for_export, tolerance, downtime_gap_
                     export_df['first_shot_time_diff'].iloc[0] if not export_df.empty else 0
                 )
 
-                # Compute SPM / SPH per shot for export
-                _ct_vals = pd.to_numeric(export_df['ACTUAL CT'], errors='coerce')
-                export_df['SPM'] = (60.0   / _ct_vals).round(4)
-                export_df['SPH'] = (3600.0 / _ct_vals).round(4)
-
                 export_df['Shot Sequence'] = range(1, len(export_df) + 1)
                 for col in formula_columns:
                     if col not in export_df.columns:
@@ -1895,11 +1890,6 @@ def prepare_and_generate_run_based_excel(df_for_export, tolerance, downtime_gap_
 
                 # Keep desired base cols that actually exist + formula cols
                 cols_to_keep = [c for c in desired_columns_base if c in export_df.columns]
-                # Insert SPM/SPH right after ACTUAL CT
-                act_ct_pos = cols_to_keep.index('ACTUAL CT') + 1 if 'ACTUAL CT' in cols_to_keep else len(cols_to_keep)
-                cols_to_keep.insert(act_ct_pos, 'SPM')
-                cols_to_keep.insert(act_ct_pos + 1, 'SPH')
-
                 cols_to_keep_final = cols_to_keep + [c for c in formula_columns if c in export_df.columns]
                 if 'Shot Sequence' in export_df.columns:
                     cols_to_keep_final.insert(
