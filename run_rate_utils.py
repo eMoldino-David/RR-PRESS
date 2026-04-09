@@ -1651,14 +1651,36 @@ def plot_ct_histogram(df):
     bin_size = max(0.1, mode_min * 0.02) if mode_min else 0.5
     fig = go.Figure()
 
-    # Single unified bar colour — avoids misleading per-run stop_flag colouring
-    fig.add_trace(go.Histogram(
-        x=all_cts_capped, name='All Strokes',
-        marker_color='rgba(52, 152, 219, 0.70)',
-        marker_line=dict(color='rgba(52, 152, 219, 1.0)', width=0.4),
-        xbins=dict(size=bin_size),
-        hovertemplate='CT: %{x:.2f}s<br>Count: %{y}<extra></extra>'
-    ))
+    if multi_run and lower_min is not None:
+        # Colour by position relative to the displayed envelope so bars
+        # always match the visible orange lines — not per-shot stop_flag
+        # which varies by run and creates misleading blue bars outside the lines.
+        inside  = all_cts_capped[(all_cts_capped >= lower_min) & (all_cts_capped <= upper_max)]
+        outside = all_cts_capped[(all_cts_capped < lower_min)  | (all_cts_capped > upper_max)]
+        traces = [
+            (inside,  'Within Envelope', 'rgba(52,152,219,0.75)', 'rgba(52,152,219,1.0)'),
+            (outside, 'Outside Envelope', 'rgba(255,105,97,0.70)', 'rgba(255,105,97,1.0)'),
+        ]
+    else:
+        # Single-run: colour by stop_flag — limits are consistent so it's accurate
+        normal  = all_cts_capped[df.loc[df['ACTUAL CT'].isin(all_cts_capped), 'stop_flag'] == 0] \
+                  if 'stop_flag' in df.columns else all_cts_capped
+        stopped = all_cts_capped[df.loc[df['ACTUAL CT'].isin(all_cts_capped), 'stop_flag'] == 1] \
+                  if 'stop_flag' in df.columns else pd.Series(dtype=float)
+        traces = [
+            (normal,  'Normal Strokes',  'rgba(52,152,219,0.75)', 'rgba(52,152,219,1.0)'),
+            (stopped, 'Stopped Strokes', 'rgba(255,105,97,0.70)', 'rgba(255,105,97,1.0)'),
+        ]
+
+    for data, name, fill, line_col in traces:
+        if not (hasattr(data, '__len__') and len(data) == 0):
+            fig.add_trace(go.Histogram(
+                x=data, name=name,
+                marker_color=fill,
+                marker_line=dict(color=line_col, width=0.4),
+                xbins=dict(size=bin_size),
+                hovertemplate='CT: %{x:.2f}s<br>Count: %{y}<extra>' + name + '</extra>'
+            ))
 
     if multi_run:
         # Tolerance envelope band (green)
