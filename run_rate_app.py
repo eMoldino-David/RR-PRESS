@@ -305,18 +305,18 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
     def _T(shot_term, stroke_term):
         return stroke_term if press_mode else shot_term
 
-    # SPM / SPH unit toggle (only shown in press mode)
+    # SPM / SPH / CT unit toggle (only shown in press mode)
     if press_mode:
         stroke_unit = st.radio(
-            "Stroke Rate Display Unit",
-            options=["SPM", "SPH"],
+            "Mode Display Unit",
+            options=["SPM", "SPH", "CT"],
             index=0,
             horizontal=True,
             key="rr_stroke_unit",
-            help="SPM = Strokes Per Minute  |  SPH = Strokes Per Hour"
+            help="SPM = Strokes Per Minute  |  SPH = Strokes Per Hour  |  CT = Cycle Time (sec)"
         )
     else:
-        stroke_unit = "SPM"  # unused in non-press mode
+        stroke_unit = "CT"  # non-press always shows CT
 
     analysis_level = st.radio(
         "Select Analysis Level",
@@ -801,10 +801,23 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
 
     _pm = press_mode  # shorthand
     _su = stroke_unit
-    _lbl_mode   = f"Mode {_su}"              if _pm else "Mode Cycle Time (sec)"
-    _lbl_lower  = f"Lower {_su} Limit"       if _pm else "Lower Limit (sec)"
-    _lbl_upper  = f"Upper {_su} Limit"       if _pm else "Upper Limit (sec)"
-    _lbl_app    = f"Approved {_su}"          if _pm else "Approved CT (sec)"
+    # Convert to stroke rate only when press mode AND not viewing as raw CT
+    _convert = _pm and _su != "CT"
+
+    if _su == "CT" or not _pm:
+        _lbl_mode  = "Mode Cycle Time (sec)"
+        _lbl_lower = "Lower Limit (sec)"
+        _lbl_upper = "Upper Limit (sec)"
+        _lbl_app   = "Approved CT (sec)"
+        _lbl_c1    = "Lower Limit (sec)"
+        _lbl_c3    = "Upper Limit (sec)"
+    else:
+        _lbl_mode  = f"Mode {_su}"
+        _lbl_lower = f"Upper {_su} Limit"   # limits invert under reciprocal
+        _lbl_upper = f"Lower {_su} Limit"
+        _lbl_app   = f"Approved {_su}"
+        _lbl_c1    = f"Upper {_su} Limit"
+        _lbl_c3    = f"Lower {_su} Limit"
 
     _mode_lo = summary_metrics.get('min_mode_ct', 0)
     _mode_hi = summary_metrics.get('max_mode_ct', 0)
@@ -815,33 +828,32 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
     _app_lo  = summary_metrics.get('min_approved_ct', np.nan)
     _app_hi  = summary_metrics.get('max_approved_ct', np.nan)
 
-    # In press mode limits invert: higher CT → lower SPM
-    _fmt_mode  = fmt_metric(_mode_lo, _mode_hi, to_spm=_pm)
-    _fmt_lower = fmt_metric(_low_lo,  _low_hi,  to_spm=_pm)   # lower CT limit → upper SPM
-    _fmt_upper = fmt_metric(_up_lo,   _up_hi,   to_spm=_pm)   # upper CT limit → lower SPM
-    _fmt_app   = fmt_metric(_app_lo,  _app_hi,  to_spm=_pm)
+    _fmt_mode  = fmt_metric(_mode_lo, _mode_hi, to_spm=_convert)
+    _fmt_lower = fmt_metric(_low_lo,  _low_hi,  to_spm=_convert)
+    _fmt_upper = fmt_metric(_up_lo,   _up_hi,   to_spm=_convert)
+    _fmt_app   = fmt_metric(_app_lo,  _app_hi,  to_spm=_convert)
 
     if show_approved_ct:
         c_main, c_app = st.columns([3, 1])
         with c_main:
             with st.container(border=True):
                 c1, c2, c3 = st.columns(3)
-                c1.metric(_lbl_lower if not _pm else "Upper SPM Limit", _fmt_lower)
+                c1.metric(_lbl_c1, _fmt_lower)
                 with c2:
                     with st.container(border=True):
                         st.metric(_lbl_mode, _fmt_mode)
-                c3.metric(_lbl_upper if not _pm else "Lower SPM Limit", _fmt_upper)
+                c3.metric(_lbl_c3, _fmt_upper)
         with c_app:
             with st.container(border=True):
                 st.metric(_lbl_app, _fmt_app)
     else:
         with st.container(border=True):
             c1, c2, c3 = st.columns(3)
-            c1.metric(_lbl_lower if not _pm else "Upper SPM Limit", _fmt_lower)
+            c1.metric(_lbl_c1, _fmt_lower)
             with c2:
                 with st.container(border=True):
                     st.metric(_lbl_mode, _fmt_mode)
-            c3.metric(_lbl_upper if not _pm else "Lower SPM Limit", _fmt_upper)
+            c3.metric(_lbl_c3, _fmt_upper)
 
     # ------------------------------------------------------------------
     # Automated analysis expander
@@ -899,14 +911,17 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 else 'daily' if 'Weekly' in analysis_level
                 else 'weekly')
 
+    # stroke_unit for charts — CT view falls back to SPM for rate charts
+    _chart_su = stroke_unit if stroke_unit != "CT" else "SPM"
+
     if press_mode:
         # ── Chart 1: Bucketed Stroke Rate ─────────────────────────────────────
-        st.markdown(f"#### 📊 Chart 1 — Bucketed Stroke Rate ({stroke_unit})")
+        st.markdown(f"#### 📊 Chart 1 — Bucketed Stroke Rate ({_chart_su})")
         with st.expander("ℹ️ How to read this chart", expanded=False):
             st.markdown(f"""
             **What it shows:** Actual stroke counts aggregated into
-            {'1-minute' if stroke_unit == 'SPM' else '1-hour'} time buckets.
-            The count in each bucket *is* the {stroke_unit} for that period.
+            {'1-minute' if _chart_su == 'SPM' else '1-hour'} time buckets.
+            The count in each bucket *is* the {_chart_su} for that period.
 
             **Stacked bars:** Blue = normal strokes, Red = stopped strokes within that bucket.
             A bucket that is mostly red indicates the press was struggling during that period.
@@ -922,7 +937,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             """)
         rr_utils.plot_stroke_rate_chart(
             results['processed_df'], results.get('mode_ct'),
-            stroke_unit=stroke_unit, show_approved_ct=show_approved_ct
+            stroke_unit=_chart_su, show_approved_ct=show_approved_ct
         )
         st.markdown("---")
 
@@ -949,13 +964,9 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             results['processed_df'],
             results.get('lower_limit'), results.get('upper_limit'),
             results.get('mode_ct'), time_agg=time_agg,
-            show_approved_ct=show_approved_ct, press_mode=False, stroke_unit='SPM'
+            show_approved_ct=show_approved_ct, press_mode=False, stroke_unit=_chart_su
         )
         st.markdown("---")
-
-        # ── Chart 3: CT Histogram ──────────────────────────────────────────────
-        st.markdown("#### 📊 Chart 3 — Cycle Time Distribution")
-        rr_utils.plot_ct_histogram(results['processed_df'])
     else:
         rr_utils.plot_shot_bar_chart(
             results['processed_df'],
@@ -965,8 +976,12 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             time_agg=time_agg,
             show_approved_ct=show_approved_ct,
             press_mode=False,
-            stroke_unit=stroke_unit
+            stroke_unit=_chart_su
         )
+
+    # ── CT Histogram — all tool types, collapsed by default ───────────────────
+    with st.expander("📊 Cycle Time Distribution", expanded=False):
+        rr_utils.plot_ct_histogram(results['processed_df'])
 
     with st.expander("View Shot Data Table", expanded=False):
         cols_to_show = ['shot_time', 'ACTUAL CT', 'adj_ct_sec',
