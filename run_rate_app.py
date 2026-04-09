@@ -286,7 +286,7 @@ def render_trends_tab(df_tool, tool_id_selection, tolerance, downtime_gap_tolera
     ]
     _chart_types = ['Line', 'Bar']
 
-    ca, cb, cc = st.columns([2, 2, 2])
+    ca, cb = st.columns([2, 2])
     with ca:
         m1 = st.selectbox("Primary metric (left Y)", _all_metrics,
                           index=0, key=f"{_k}trend_m1")
@@ -301,10 +301,6 @@ def render_trends_tab(df_tool, tool_id_selection, tolerance, downtime_gap_tolera
                           key=f"{_k}trend_t2")
         else:
             t2 = 'Line'
-    with cc:
-        show_bands = st.checkbox("Show stability reference bands", value=True,
-                                 key=f"{_k}trend_bands",
-                                 help="Red/orange/green bands (0–50/50–70/70–100%) — only applies when primary metric is RR Time Stability or RR Shot Efficiency")
 
     df_plot = df_trends.sort_values(period_name, ascending=True)
 
@@ -333,8 +329,7 @@ def render_trends_tab(df_tool, tool_id_selection, tolerance, downtime_gap_tolera
         _add_trace(fig, df_plot, period_name, m2, t2, True, m2, _c2)
 
     # % reference bands only shown for stability metrics (0-100% scale)
-    _is_stability = m1 in ('RR Time Stability (%)', 'RR Shot Efficiency (%)')
-    if show_bands and _is_stability:
+    if m1 == 'RR Time Stability (%)':
         for y0, y1, c in [(0, 50, rr_utils.PASTEL_COLORS['red']),
                           (50, 70, rr_utils.PASTEL_COLORS['orange']),
                           (70, 100, rr_utils.PASTEL_COLORS['green'])]:
