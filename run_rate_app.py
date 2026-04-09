@@ -211,15 +211,16 @@ def render_trends_tab(df_tool, tool_id_selection, tolerance, downtime_gap_tolera
         trend_data.append({
             period_name: label,
             'SortKey': period if trend_freq == "Daily" else period.start_time,
-            'Stability Index (%)': stability,
-            'Efficiency (%)': efficiency,
-            'MTTR (min)': mttr,
-            'MTBF (min)': mtbf,
+            'RR Time Stability (%)': stability,
+            'RR Shot Efficiency (%)': efficiency,
+            'RR MTTR (min)': mttr,
+            'RR MTBF (min)': mtbf,
             'Total Shots': total_shots,
-            'Normal Shots': normal_shots,  # #11 fix: was missing, caused blank in PPTX
+            'Normal Shots': normal_shots,
             'Stop Events': stops,
+            'Total Run Duration (h)': total_runtime / 3600,
             'Production Time (h)': prod_time / 3600,
-            'Downtime (h)': downtime / 3600,
+            'RR Downtime (h)': downtime / 3600,
         })
 
     if not trend_data:
@@ -232,11 +233,12 @@ def render_trends_tab(df_tool, tool_id_selection, tolerance, downtime_gap_tolera
 
     st.dataframe(
         df_trends.style.format({
-            'Stability Index (%)': '{:.1f}', 'Efficiency (%)': '{:.1f}',
-            'MTTR (min)': '{:.1f}', 'MTBF (min)': '{:.1f}',
+            'RR Time Stability (%)': '{:.1f}', 'RR Shot Efficiency (%)': '{:.1f}',
+            'RR MTTR (min)': '{:.1f}', 'RR MTBF (min)': '{:.1f}',
             'Total Shots': '{:,.0f}', 'Stop Events': '{:,.0f}',
-            'Production Time (h)': '{:.1f}', 'Downtime (h)': '{:.1f}',
-        }).background_gradient(subset=['Stability Index (%)'],
+            'Total Run Duration (h)': '{:.1f}',
+            'Production Time (h)': '{:.1f}', 'RR Downtime (h)': '{:.1f}',
+        }).background_gradient(subset=['RR Time Stability (%)'],
                                cmap='RdYlGn', vmin=0, vmax=100),
         width='stretch'
     )
@@ -273,7 +275,9 @@ def render_trends_tab(df_tool, tool_id_selection, tolerance, downtime_gap_tolera
     st.subheader("Visual Trend")
     metric_to_plot = st.selectbox(
         "Select Metric to Visualize",
-        ['Stability Index (%)', 'Efficiency (%)', 'MTTR (min)', 'MTBF (min)', 'Total Shots'],
+        ['RR Time Stability (%)', 'RR Shot Efficiency (%)', 'RR MTTR (min)',
+         'RR MTBF (min)', 'Total Shots', 'Total Run Duration (h)',
+         'Production Time (h)', 'RR Downtime (h)'],
         key=f"{_k}trend_viz_select"
     )
 
@@ -1167,7 +1171,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
 
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("Total Bucket Analysis")
+            st.subheader("Total Time Bucket Analysis")
             if not complete_runs.empty and "time_bucket" in complete_runs.columns:
                 b_counts = (complete_runs["time_bucket"]
                             .value_counts()
@@ -1197,7 +1201,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 st.info("No complete runs.")
 
         with c2:
-            st.subheader("Stability per Production Run")
+            st.subheader("Time Stability Trend per Run")
             if run_summary_df is not None and not run_summary_df.empty:
                 rr_utils.plot_trend_chart(
                     run_summary_df, 'RUN ID', 'STABILITY %',
@@ -1211,7 +1215,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             else:
                 st.info("No runs to analyse.")
 
-        st.subheader("Bucket Trend per Production Run")
+        st.subheader("Time Bucket Trend per Run")
         if (not complete_runs.empty
                 and run_summary_df is not None
                 and not run_summary_df.empty):
@@ -1259,7 +1263,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                         unsafe_allow_html=True
                     )
 
-        st.subheader("MTTR & MTBF per Production Run")
+        st.subheader("MTTR & MTBF Trend per Run")
         if (run_summary_df is not None
                 and not run_summary_df.empty
                 and run_summary_df['STOPS'].sum() > 0):

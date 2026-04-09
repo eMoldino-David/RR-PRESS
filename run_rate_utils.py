@@ -982,7 +982,7 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
     ))
     fig.add_trace(go.Scatter(
         x=[None], y=[None], mode='lines', name='New Run Start',
-        line=dict(color='purple', dash='dash', width=2), showlegend=True
+        line=dict(color='rgba(167,139,250,1)', dash='dash', width=2), showlegend=True
     ))
 
     if show_approved_ct and 'approved_ct' in df.columns:
@@ -1030,12 +1030,12 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
             lbl = label_map.get(run_id, f'Run {i + 1}')
             x_str = str(start_time)
             fig.add_shape(type='line', x0=x_str, x1=x_str, y0=0, y1=1,
-                          yref='paper', line=dict(width=1.5, dash='dash', color='purple'))
+                          yref='paper', line=dict(width=1.5, dash='dash', color='rgba(167,139,250,1)'))
             fig.add_annotation(x=x_str, y=0.98, yref='paper', text=lbl,
                                showarrow=False, xanchor='left',
-                               font=dict(color='purple', size=10),
+                               font=dict(color='rgba(167,139,250,1)', size=10),
                                bgcolor='rgba(240,240,240,0.85)',
-                               bordercolor='purple', borderwidth=1, borderpad=2)
+                               bordercolor='rgba(167,139,250,1)', borderwidth=1, borderpad=2)
 
     if press_mode:
         y_cap = max((_mode_y or 10) * 2, 20)
@@ -1179,12 +1179,12 @@ def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM', show_approved_ct=Fals
             lbl = label_map.get(run_id, f'Run {i + 1}')
             x_str = str(pd.Timestamp(start_time).floor(freq))
             fig.add_shape(type='line', x0=x_str, x1=x_str, y0=0, y1=1,
-                          yref='paper', line=dict(width=1.5, dash='dash', color='purple'))
+                          yref='paper', line=dict(width=1.5, dash='dash', color='rgba(167,139,250,1)'))
             fig.add_annotation(x=x_str, y=0.98, yref='paper', text=lbl,
                                showarrow=False, xanchor='left',
-                               font=dict(color='purple', size=10),
+                               font=dict(color='rgba(167,139,250,1)', size=10),
                                bgcolor='rgba(240,240,240,0.85)',
-                               bordercolor='purple', borderwidth=1, borderpad=2)
+                               bordercolor='rgba(167,139,250,1)', borderwidth=1, borderpad=2)
 
     y_max = max(
         agg_n['normal'].dropna().max() if not agg_n['normal'].dropna().empty else 0,
@@ -2089,7 +2089,7 @@ def generate_excel_report(all_runs_data, tolerance):
             )
             ws.write_formula('L2', "=K2-H3", sub_header_format)
 
-            ws.write('K4', 'Efficiency', label_format)
+            ws.write('K4', 'RR Shot Efficiency', label_format)
             ws.write('L4', 'Stop Events', label_format)
             ws.write_formula('K5', "=L2/K2", percent_format)
             if stop_event_col:
@@ -2102,8 +2102,8 @@ def generate_excel_report(all_runs_data, tolerance):
                 ws.write('L5', 'N/A', sub_header_format)
 
             ws.write('F5', 'Tot Run Time (Calc)', label_format)
-            ws.write('G5', 'Tot Down Time', label_format)
-            ws.write('H5', 'Tot Prod Time', label_format)
+            ws.write('G5', 'RR Downtime', label_format)
+            ws.write('H5', 'Production Time', label_format)
 
             downtime_to_write = data.get('tot_down_time_sec', 0)
             if not isinstance(downtime_to_write, (int, float)):
@@ -2114,8 +2114,8 @@ def generate_excel_report(all_runs_data, tolerance):
             ws.write('H6', data.get('production_time_sec', 0) / 86400, time_format)
 
             ws.write('F4', '', label_format)
-            ws.write('G4', 'Down %', label_format)
-            ws.write('H4', 'Prod %', label_format)
+            ws.write('G4', 'RR Downtime %', label_format)
+            ws.write('H4', 'Production %', label_format)
             ws.write('F7', '', data_format)
             ws.write_formula('G7', "=IFERROR(G6/F6, 0)", percent_format)
             ws.write_formula('H7', "=IFERROR(H6/F6, 0)", percent_format)
@@ -2481,14 +2481,16 @@ def generate_weekly_comparison_pptx(df_weekly: pd.DataFrame, tool_id: str) -> by
     # Metric definitions:
     # (row label, df column, format string, higher_is_better)
     METRICS = [
-        ("Stability Index",     "Stability Index (%)",  "{:.1f}%",  True),
-        ("Run Rate Efficiency", "Efficiency (%)",        "{:.1f}%",  True),
-        ("MTTR",                "MTTR (min)",            "{:.1f} min", False),
-        ("MTBF",                "MTBF (min)",            "{:.1f} min", True),
-        ("Production Time",     "Production Time (h)",  "{:.1f} h",  True),
-        ("Total Shots",         "Total Shots",           "{:,.0f}",   True),
-        ("Normal Shots",        "Normal Shots",          "{:,.0f}",   True),
-        ("Stop Events",         "Stop Events",           "{:.0f}",    False),
+        ("RR Time Stability",   "RR Time Stability (%)",   "{:.1f}%",    True),
+        ("RR Shot Efficiency",  "RR Shot Efficiency (%)",  "{:.1f}%",    True),
+        ("RR MTTR",             "RR MTTR (min)",           "{:.1f} min", False),
+        ("RR MTBF",             "RR MTBF (min)",           "{:.1f} min", True),
+        ("Total Run Duration",  "Total Run Duration (h)",  "{:.1f} h",   True),
+        ("Production Time",     "Production Time (h)",     "{:.1f} h",   True),
+        ("RR Downtime",         "RR Downtime (h)",         "{:.1f} h",   False),
+        ("Total Shots",         "Total Shots",             "{:,.0f}",    True),
+        ("Normal Shots",        "Normal Shots",            "{:,.0f}",    True),
+        ("Stop Events",         "Stop Events",             "{:.0f}",     False),
     ]
 
     # ------------------------------------------------------------------ data
