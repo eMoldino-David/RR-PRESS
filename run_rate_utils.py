@@ -1019,8 +1019,23 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
 
     if 'run_id' in df.columns:
         run_starts = df.groupby('run_id')['shot_time'].min().sort_values()
-        for start_time in run_starts.iloc[1:]:
-            fig.add_vline(x=start_time, line_width=2, line_dash="dash", line_color="purple")
+        # Build run_id → label map if run_label column exists
+        label_map = {}
+        if 'run_label' in df.columns:
+            label_map = df.drop_duplicates('run_id').set_index('run_id')['run_label'].to_dict()
+        for i, (run_id, start_time) in enumerate(run_starts.items()):
+            if i == 0:
+                continue  # no boundary line before the first run
+            lbl = label_map.get(run_id, f'Run {i + 1}')
+            fig.add_vline(
+                x=start_time, line_width=1.5, line_dash='dash', line_color='purple',
+                annotation=dict(
+                    text=lbl, font=dict(color='purple', size=10),
+                    bgcolor='rgba(240,240,240,0.85)',
+                    bordercolor='purple', borderwidth=1, borderpad=2,
+                    yref='paper', y=0.98, xanchor='left'
+                )
+            )
 
     if press_mode:
         # SPM: cap at 2× mode SPM or at least 20 SPM
@@ -1112,11 +1127,23 @@ def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM',
 
     if run_col:
         run_starts = df.groupby(run_col)['shot_time'].min().sort_values()
-        for start_time in run_starts.iloc[1:]:
-            # Floor to bucket boundary so the line appears at the left edge
-            # of the first bar of the new run, not mid-bar
+        label_map = {}
+        if 'run_label' in df.columns:
+            label_map = df.drop_duplicates(run_col).set_index(run_col)['run_label'].to_dict()
+        for i, (run_id, start_time) in enumerate(run_starts.items()):
+            if i == 0:
+                continue
+            lbl = label_map.get(run_id, f'Run {i + 1}')
             bucket_start = pd.Timestamp(start_time).floor(freq)
-            fig.add_vline(x=bucket_start, line_width=2, line_dash='dash', line_color='purple')
+            fig.add_vline(
+                x=bucket_start, line_width=1.5, line_dash='dash', line_color='purple',
+                annotation=dict(
+                    text=lbl, font=dict(color='purple', size=10),
+                    bgcolor='rgba(240,240,240,0.85)',
+                    bordercolor='purple', borderwidth=1, borderpad=2,
+                    yref='paper', y=0.98, xanchor='left'
+                )
+            )
 
     y_max = max(
         agg_n['normal'].dropna().max() if not agg_n['normal'].dropna().empty else 0,
