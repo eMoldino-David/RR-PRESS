@@ -1841,19 +1841,20 @@ def generate_mttr_mtbf_analysis(analysis_df, analysis_level):
 
 def prepare_and_generate_run_based_excel(df_for_export, tolerance, downtime_gap_tolerance,
                                           run_interval_hours, tool_id_selection):
-    """Generates the run-based Excel report using the full calculation engine."""
+    """Generates the run-based Excel report using the pre-processed DataFrame.
+
+    df_for_export must already contain the columns produced by the global
+    RunRateCalculator pass (mode_ct, mode_lower, mode_upper, stop_flag,
+    stop_event, run_id, adj_ct_sec etc). This ensures mode_ct in the export
+    matches the dashboard exactly — both read from the same processing pass.
+    """
     try:
-        base_calc = RunRateCalculator(df_for_export, tolerance, downtime_gap_tolerance,
-                                      'aggregate', run_interval_hours)
-        df_processed = base_calc.results.get("processed_df", pd.DataFrame())
+        df_processed = df_for_export.copy()
 
         if df_processed.empty or 'run_id' not in df_processed.columns:
             st.error("Processing failed for Excel export.")
             return BytesIO().getvalue()
 
-        # run_group is needed for the TIME BUCKET formula column.
-        # stop_flag/stop_event/run_group are already correctly set by RunRateCalculator
-        # (which now includes the run-start reset internally), so no patch needed here.
         df_processed['run_group'] = df_processed['stop_event'].cumsum()
 
         all_runs_data = {}
