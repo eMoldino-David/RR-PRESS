@@ -927,9 +927,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
 
     if press_mode:
         if stroke_unit != "CT":
-            # ── Chart 1: Bucketed Stroke Rate ─────────────────────────────────
-            st.markdown(f"#### 📊 Chart 1 — Bucketed Stroke Rate ({_chart_su})")
-            with st.expander("ℹ️ How to read this chart", expanded=False):
+            with st.expander("ℹ️ How to read this chart — Bucketed Stroke Rate", expanded=False):
                 st.markdown(f"""
                 **What it shows:** Actual stroke counts aggregated into
                 {'1-minute' if _chart_su == 'SPM' else '1-hour'} time buckets.
@@ -952,13 +950,8 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 stroke_unit=_chart_su, show_approved_ct=show_approved_ct
             )
             st.markdown("---")
-            chart2_num = "Chart 2"
-        else:
-            chart2_num = "Chart 1"
 
-        # ── Raw CT per shot ────────────────────────────────────────────────────
-        st.markdown(f"#### 📊 {chart2_num} — Raw Cycle Time per Shot (seconds)")
-        with st.expander("ℹ️ How to read this chart", expanded=False):
+        with st.expander("ℹ️ How to read this chart — Raw Cycle Time per Shot", expanded=False):
             st.markdown("""
             **What it shows:** Every individual stroke plotted at its actual cycle time
             in seconds. This is the raw signal that all metrics are derived from.
@@ -1015,7 +1008,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
 
         df_shot_data = results['processed_df'][cols_to_show].copy()
         df_shot_data.rename(columns=rename_map, inplace=True)
-        st.dataframe(df_shot_data)
+        st.dataframe(rr_utils.format_summary_table(df_shot_data))
 
     st.markdown("---")
 
@@ -1135,13 +1128,13 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 for col, fmtstr in [
                     ('Mode CT (for the run)', '{:.2f}'), ('Approved CT', '{:.2f}'),
                     ('Lower limit CT (sec)', '{:.2f}'), ('Upper Limit CT (sec)', '{:.2f}'),
-                    ('MTTR (min)', '{:.1f}'), ('MTBF (min)', '{:.1f}'),
-                    ('Stability (%)', '{:.1f}'),
+                    ('MTTR (min)', '{:.2f}'), ('MTBF (min)', '{:.2f}'),
+                    ('Stability (%)', '{:.2f}'),
                 ]:
                     if col in d_df.columns:
                         fmt[col] = fmtstr
 
-                st.dataframe(d_df[final_cols].style.format(fmt), width='stretch')
+                st.dataframe(rr_utils.format_summary_table(d_df[final_cols]).style.format(fmt), width='stretch')
 
         c1, c2 = st.columns(2)
         with c1:
@@ -1170,7 +1163,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                         'time_bucket': 'Time Bucket', 'run_end_time': 'Run End Date/Time',
                         'run_label': 'Run ID'
                     })
-                    st.dataframe(df_bucket_data)
+                    st.dataframe(rr_utils.format_summary_table(df_bucket_data))
             else:
                 st.info("No complete runs.")
 
@@ -1185,7 +1178,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                     df_renamed = rr_utils.get_renamed_summary_df(run_summary_df)
                     if not show_approved_ct and 'Approved CT' in df_renamed.columns:
                         df_renamed = df_renamed.drop(columns=['Approved CT'])
-                    st.dataframe(df_renamed)
+                    st.dataframe(rr_utils.format_summary_table(df_renamed))
             else:
                 st.info("No runs to analyse.")
 
@@ -1252,7 +1245,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 df_renamed = rr_utils.get_renamed_summary_df(run_summary_df)
                 if not show_approved_ct and 'Approved CT' in df_renamed.columns:
                     df_renamed = df_renamed.drop(columns=['Approved CT'])
-                st.dataframe(df_renamed)
+                st.dataframe(rr_utils.format_summary_table(df_renamed))
                 if detailed_view:
                     analysis_df = pd.DataFrame()
                     if trend_summary_df is not None and not trend_summary_df.empty:
@@ -1278,7 +1271,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 df_renamed = rr_utils.get_renamed_summary_df(hourly_summary_df)
                 if not show_approved_ct and 'Approved CT' in df_renamed.columns:
                     df_renamed = df_renamed.drop(columns=['Approved CT'])
-                st.dataframe(df_renamed, width='stretch')
+                st.dataframe(rr_utils.format_summary_table(df_renamed), width="stretch")
             else:
                 st.info("No hourly data available.")
 
@@ -1318,7 +1311,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                     df_renamed = rr_utils.get_renamed_summary_df(hourly_summary_df)
                     if not show_approved_ct and 'Approved CT' in df_renamed.columns:
                         df_renamed = df_renamed.drop(columns=['Approved CT'])
-                    st.dataframe(df_renamed)
+                    st.dataframe(rr_utils.format_summary_table(df_renamed))
             else:
                 st.info("No hourly stability data.")
 
@@ -1333,7 +1326,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 df_renamed = rr_utils.get_renamed_summary_df(hourly_summary_df)
                 if not show_approved_ct and 'Approved CT' in df_renamed.columns:
                     df_renamed = df_renamed.drop(columns=['Approved CT'])
-                st.dataframe(df_renamed)
+                st.dataframe(rr_utils.format_summary_table(df_renamed))
             if detailed_view:
                 with st.expander("🤖 View MTTR/MTBF Correlation Analysis", expanded=False):
                     st.info("Automated correlation analysis is best viewed in 'Run' mode.")

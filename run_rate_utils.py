@@ -144,6 +144,56 @@ def get_renamed_summary_df(df_in):
     return df_renamed[final_cols]
 
 
+# Column format rules — matched by substring so aliases are covered automatically.
+# Order matters: more specific patterns first.
+_COL_FMT_RULES = [
+    # Integers — no decimals
+    ({'stops', 'total shots', 'normal shots', 'total strokes', 'normal strokes',
+      'stop events', 'hour', 'shots'},          '{:.0f}'),
+    # Percentages — 2dp
+    ({'stability'},                              '{:.2f}'),
+    # Time metrics — 2dp
+    ({'mttr', 'mtbf'},                          '{:.2f}'),
+    # CT / limit values — 2dp
+    ({'mode ct', 'approved ct', 'lower', 'upper', 'actual ct',
+      'adj_ct', 'cycle time'},                  '{:.2f}'),
+]
+
+def _col_fmt(col_name: str) -> str | None:
+    """Return a format string for a column based on its name, or None."""
+    lc = col_name.lower()
+    for keywords, fmt in _COL_FMT_RULES:
+        if any(k in lc for k in keywords):
+            return fmt
+    return None
+
+
+def format_summary_table(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Return a copy of df with all numeric columns rounded to their display
+    precision based on column name, ensuring trailing zeros (e.g. 0.10 not 0.1).
+    Returns a plain DataFrame (not a Styler) so callers can still chain operations,
+    but values are pre-rounded strings only for float columns.
+
+    Integer-category columns are cast to int where possible to remove .0 suffixes.
+    """
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    for col in out.columns:
+        if not pd.api.types.is_numeric_dtype(out[col]):
+            continue
+        fmt = _col_fmt(col)
+        if fmt is None:
+            fmt = '{:.2f}'   # safe default for any unmapped numeric column
+        if fmt == '{:.0f}':
+            # Cast to nullable int to avoid ".0" display
+            out[col] = pd.to_numeric(out[col], errors='coerce').round(0).astype('Int64')
+        else:
+            out[col] = pd.to_numeric(out[col], errors='coerce').round(2)
+    return out
+
+
 @st.cache_data
 def load_all_data(files, _cache_version=None):
     """
@@ -966,9 +1016,8 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
     _stop_label   = "Stopped Stroke" if press_mode else "Stopped Shot"
     _app_label    = "Approved SPM" if press_mode else "Approved CT"
 
-    # Bar width = mode CT in ms so bars tile edge-to-edge at the tool's
-    # natural rhythm and scale correctly on zoom.
-    _bar_w = (int(mode_ct * 1000) if isinstance(mode_ct, (int, float)) and mode_ct > 0
+    # 50% of mode CT in ms — visible when zoomed, not overwhelming at full scale
+    _bar_w = (int(mode_ct * 500) if isinstance(mode_ct, (int, float)) and mode_ct > 0
               else None)
 
     fig = go.Figure()
@@ -1098,9 +1147,8 @@ def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM',
     agg_n = pd.concat(normal_rows,  ignore_index=True)
     agg_s = pd.concat(stopped_rows, ignore_index=True)
 
-    # Width in milliseconds = bucket duration so bars fill the full bucket
-    # and scale correctly when zooming in on the time axis.
-    bar_width_ms = 60_000 if freq == 'min' else 3_600_000
+    # 70% of bucket width — fills nicely when zoomed without touching adjacent bars
+    bar_width_ms = int((60_000 if freq == 'min' else 3_600_000) * 0.70)
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
@@ -1627,52 +1675,60 @@ def _ct_histogram_analysis(mean_ct, median_ct, std, cv_pct, skew, bmc, n_peaks,
                            pct_within, n_runs, multi_run,
                            mode_min, mode_max, lower_min, upper_max):
     """
-    Rule-based distribution shape analysis — no external API required.
-    Uses KDE peak count (n_peaks) as the primary modal detector since BMC
-    only distinguishes uni- vs bimodal and misses 3+ mode distributions.
+    Rule-based distribution shape analysis — objective, commodity-agnostic.
+    Describes the pattern and categories of causes rather than specific diagnoses.
     """
     parts = []
 
-    # ── Modal shape — use n_peaks as primary signal ────────────────────
-    peaks_close = bmc > 0.555 and cv_pct <= 10  # multiple peaks but tight together
+    _cause_categories = (
+        "process variation, tooling condition, material/feedstock consistency, "
+        "setup or changeover, or environmental factors"
+    )
+
+    peaks_close = bmc > 0.555 and cv_pct <= 10
 
     if n_peaks >= 3:
         parts.append(
-            f"**{n_peaks} distinct operating speeds** detected in the curve. "
-            f"Each peak represents a different cycle rhythm — likely caused by "
-            f"material batch changes, setup adjustments, or different operating "
-            f"conditions within this period. Review run segments individually."
+            f"**{n_peaks} distinct speed clusters** visible in the curve — "
+            f"the tool operated at {n_peaks} different rhythms within this period. "
+            f"Common cause categories: multiple setups or batches, shift handovers, "
+            f"or recurring process interruptions that resolve at a different operating point. "
+            f"Review individual run segments to isolate which cluster belongs to which period."
         )
     elif n_peaks == 2 and not peaks_close:
         parts.append(
-            f"**Two distinct operating speeds** detected. "
-            f"Check for setup changes, material batches, or shift handovers within this period."
+            f"**Two distinct speed clusters** detected. "
+            f"Common cause categories: setup or parameter change, material/feedstock switch, "
+            f"operator or shift change, or a recurring fault with a consistent recovery state."
         )
     elif n_peaks == 2 and peaks_close:
         parts.append(
-            f"Two close peaks detected — likely natural variation around the mode "
-            f"rather than a genuine process split (CV {cv_pct:.1f}% is low)."
+            f"Two close peaks (CV {cv_pct:.1f}%) — likely natural process variation "
+            f"around a single operating point rather than a genuine split."
         )
     elif skew > 1.0:
         parts.append(
-            f"**Strong right skew** (skew {skew:+.2f}) — a tail of slow shots pulls the "
-            f"mean ({mean_ct:.1f}s) above the median ({median_ct:.1f}s). "
-            f"Likely cause: lubrication, material drag, or intermittent feeding issues."
+            f"**Strong right skew** (skew {skew:+.2f}) — a tail of slow cycles pulling "
+            f"the mean ({mean_ct:.1f}s) above the median ({median_ct:.1f}s). "
+            f"Common cause categories: progressive degradation (wear, build-up, fatigue), "
+            f"intermittent resistance or restriction, or feedstock/material inconsistency."
         )
     elif skew > 0.4:
         parts.append(
-            f"**Moderate right skew** (skew {skew:+.2f}) — occasional slow shots. "
-            f"Mean {mean_ct:.1f}s vs median {median_ct:.1f}s."
+            f"**Moderate right skew** (skew {skew:+.2f}) — occasional slow cycles "
+            f"beyond normal rhythm. Mean {mean_ct:.1f}s vs median {median_ct:.1f}s. "
+            f"Common cause categories: sporadic process resistance, sensor sensitivity, "
+            f"or minor material variation."
         )
     elif abs(skew) <= 0.4:
         parts.append(
             f"**Symmetric distribution** (skew {skew:+.2f}) — stable, consistent rhythm "
-            f"centred around {mean_ct:.1f}s."
+            f"centred around {mean_ct:.1f}s. No dominant cause for concern."
         )
     else:
         parts.append(f"Skew {skew:+.2f} · Mean {mean_ct:.1f}s · Median {median_ct:.1f}s.")
 
-    # ── Consistency + tolerance in one line ───────────────────────────
+    # Consistency + tolerance
     if   cv_pct < 3:   cons = "excellent consistency (CV < 3%)"
     elif cv_pct < 6:   cons = "good consistency (CV 3–6%)"
     elif cv_pct < 12:  cons = "moderate variation (CV 6–12%)"
@@ -1681,15 +1737,16 @@ def _ct_histogram_analysis(mean_ct, median_ct, std, cv_pct, skew, bmc, n_peaks,
     tol_part = (f", {pct_within:.0f}% within tolerance" if pct_within is not None else "")
     parts.append(f"Process shows {cons}{tol_part}.")
 
-    # ── Multi-run drift — only flag if meaningful relative to mean ────
+    # Multi-run drift
     if multi_run and n_runs > 1:
         spread = mode_max - mode_min
         spread_pct = (spread / mean_ct * 100) if mean_ct > 0 else 0
         if spread_pct > 20:
             parts.append(
-                f"Mode CT varied by {spread:.1f}s across {n_runs} runs "
-                f"({mode_min:.1f}s → {mode_max:.1f}s, {spread_pct:.0f}% of mean) — "
-                f"significant drift suggesting tool wear or batch variation."
+                f"Mode CT shifted {spread:.1f}s across {n_runs} runs "
+                f"({mode_min:.1f}s → {mode_max:.1f}s, {spread_pct:.0f}% of mean). "
+                f"Cause categories: cumulative wear or fatigue, batch-to-batch material variation, "
+                f"thermal or environmental drift, or setup differences between runs."
             )
         elif spread_pct > 5:
             parts.append(
@@ -1697,20 +1754,17 @@ def _ct_histogram_analysis(mean_ct, median_ct, std, cv_pct, skew, bmc, n_peaks,
                 f"({mode_min:.1f}s → {mode_max:.1f}s) — minor, worth monitoring."
             )
 
-    summary = "\n\n".join(parts)
-
-    # ── Compact reference guide ────────────────────────────────────────
     guide = (
         "**Shape guide** — "
         "Narrow peak = stable; "
-        "Right tail = slow shots/drag; "
+        "Right tail = slow cycles/progressive resistance; "
         "2 humps = two operating speeds; "
-        "3+ humps = multiple conditions (batches/shifts/setups); "
-        "Wide/flat = high variation; "
+        "3+ humps = multiple operating conditions; "
+        "Wide/flat = high variation across many causes; "
         "Sharp spike = very consistent or sensor artefact."
     )
 
-    return summary + "\n\n---\n" + guide
+    return "\n\n".join(parts) + "\n\n---\n" + guide
 
 
 def plot_ct_histogram(df):
