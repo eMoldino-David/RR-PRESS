@@ -915,34 +915,38 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
     _chart_su = stroke_unit if stroke_unit != "CT" else "SPM"
 
     if press_mode:
-        # ── Chart 1: Bucketed Stroke Rate ─────────────────────────────────────
-        st.markdown(f"#### 📊 Chart 1 — Bucketed Stroke Rate ({_chart_su})")
-        with st.expander("ℹ️ How to read this chart", expanded=False):
-            st.markdown(f"""
-            **What it shows:** Actual stroke counts aggregated into
-            {'1-minute' if _chart_su == 'SPM' else '1-hour'} time buckets.
-            The count in each bucket *is* the {_chart_su} for that period.
+        if stroke_unit != "CT":
+            # ── Chart 1: Bucketed Stroke Rate ─────────────────────────────────
+            st.markdown(f"#### 📊 Chart 1 — Bucketed Stroke Rate ({_chart_su})")
+            with st.expander("ℹ️ How to read this chart", expanded=False):
+                st.markdown(f"""
+                **What it shows:** Actual stroke counts aggregated into
+                {'1-minute' if _chart_su == 'SPM' else '1-hour'} time buckets.
+                The count in each bucket *is* the {_chart_su} for that period.
 
-            **Stacked bars:** Blue = normal strokes, Red = stopped strokes within that bucket.
-            A bucket that is mostly red indicates the press was struggling during that period.
+                **Stacked bars:** Blue = normal strokes, Red = stopped strokes within that bucket.
+                A bucket that is mostly red indicates the press was struggling during that period.
 
-            **Mode line** (dotted grey) = the press's own proven rhythm derived from the
-            mode cycle time. Buckets consistently below this line indicate underperformance.
+                **Mode line** (dotted grey) = the press's own proven rhythm derived from the
+                mode cycle time. Buckets consistently below this line indicate underperformance.
 
-            **Run boundaries** (purple dashed verticals) show where the run interval
-            threshold separated distinct production runs.
+                **Run boundaries** (purple dashed verticals) show where the run interval
+                threshold separated distinct production runs.
 
-            This is the primary display used in **Vorne XL** and **Schuler DigiSens**
-            press monitoring systems.
-            """)
-        rr_utils.plot_stroke_rate_chart(
-            results['processed_df'], results.get('mode_ct'),
-            stroke_unit=_chart_su, show_approved_ct=show_approved_ct
-        )
-        st.markdown("---")
+                This is the primary display used in **Vorne XL** and **Schuler DigiSens**
+                press monitoring systems.
+                """)
+            rr_utils.plot_stroke_rate_chart(
+                results['processed_df'], results.get('mode_ct'),
+                stroke_unit=_chart_su, show_approved_ct=show_approved_ct
+            )
+            st.markdown("---")
+            chart2_num = "Chart 2"
+        else:
+            chart2_num = "Chart 1"
 
-        # ── Chart 2: Raw CT per shot ───────────────────────────────────────────
-        st.markdown("#### 📊 Chart 2 — Raw Cycle Time per Shot (seconds)")
+        # ── Raw CT per shot ────────────────────────────────────────────────────
+        st.markdown(f"#### 📊 {chart2_num} — Raw Cycle Time per Shot (seconds)")
         with st.expander("ℹ️ How to read this chart", expanded=False):
             st.markdown("""
             **What it shows:** Every individual stroke plotted at its actual cycle time

@@ -1019,23 +1019,21 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
 
     if 'run_id' in df.columns:
         run_starts = df.groupby('run_id')['shot_time'].min().sort_values()
-        # Build run_id → label map if run_label column exists
         label_map = {}
         if 'run_label' in df.columns:
             label_map = df.drop_duplicates('run_id').set_index('run_id')['run_label'].to_dict()
         for i, (run_id, start_time) in enumerate(run_starts.items()):
             if i == 0:
-                continue  # no boundary line before the first run
+                continue
             lbl = label_map.get(run_id, f'Run {i + 1}')
-            fig.add_vline(
-                x=start_time.isoformat(), line_width=1.5, line_dash='dash', line_color='purple',
-                annotation=dict(
-                    text=lbl, font=dict(color='purple', size=10),
-                    bgcolor='rgba(240,240,240,0.85)',
-                    bordercolor='purple', borderwidth=1, borderpad=2,
-                    yref='paper', y=0.98, xanchor='left'
-                )
-            )
+            x_str = str(start_time)
+            fig.add_shape(type='line', x0=x_str, x1=x_str, y0=0, y1=1,
+                          yref='paper', line=dict(width=1.5, dash='dash', color='purple'))
+            fig.add_annotation(x=x_str, y=0.98, yref='paper', text=lbl,
+                               showarrow=False, xanchor='left',
+                               font=dict(color='purple', size=10),
+                               bgcolor='rgba(240,240,240,0.85)',
+                               bordercolor='purple', borderwidth=1, borderpad=2)
 
     if press_mode:
         # SPM: cap at 2× mode SPM or at least 20 SPM
@@ -1134,16 +1132,14 @@ def plot_stroke_rate_chart(df, mode_ct, stroke_unit='SPM',
             if i == 0:
                 continue
             lbl = label_map.get(run_id, f'Run {i + 1}')
-            bucket_start = pd.Timestamp(start_time).floor(freq)
-            fig.add_vline(
-                x=bucket_start.isoformat(), line_width=1.5, line_dash='dash', line_color='purple',
-                annotation=dict(
-                    text=lbl, font=dict(color='purple', size=10),
-                    bgcolor='rgba(240,240,240,0.85)',
-                    bordercolor='purple', borderwidth=1, borderpad=2,
-                    yref='paper', y=0.98, xanchor='left'
-                )
-            )
+            x_str = str(pd.Timestamp(start_time).floor(freq))
+            fig.add_shape(type='line', x0=x_str, x1=x_str, y0=0, y1=1,
+                          yref='paper', line=dict(width=1.5, dash='dash', color='purple'))
+            fig.add_annotation(x=x_str, y=0.98, yref='paper', text=lbl,
+                               showarrow=False, xanchor='left',
+                               font=dict(color='purple', size=10),
+                               bgcolor='rgba(240,240,240,0.85)',
+                               bordercolor='purple', borderwidth=1, borderpad=2)
 
     y_max = max(
         agg_n['normal'].dropna().max() if not agg_n['normal'].dropna().empty else 0,
@@ -1615,47 +1611,54 @@ def plot_interstroke_gap(df):
     st.plotly_chart(fig, width='stretch')
 
 
-def _ct_histogram_analysis(mean_ct, median_ct, std, cv_pct, skew, bmc,
+def _ct_histogram_analysis(mean_ct, median_ct, std, cv_pct, skew, bmc, n_peaks,
                            pct_within, n_runs, multi_run,
                            mode_min, mode_max, lower_min, upper_max):
     """
-    Rule-based distribution shape analysis — concise, no external API.
+    Rule-based distribution shape analysis — no external API required.
+    Uses KDE peak count (n_peaks) as the primary modal detector since BMC
+    only distinguishes uni- vs bimodal and misses 3+ mode distributions.
     """
     parts = []
 
-    # ── Shape ─────────────────────────────────────────────────────────
-    # Bimodality only meaningful if peaks are separated (high CV implies real spread)
-    bimodal_significant = bmc > 0.555 and cv_pct > 10
-    bimodal_minor       = bmc > 0.555 and cv_pct <= 10
+    # ── Modal shape — use n_peaks as primary signal ────────────────────
+    peaks_close = bmc > 0.555 and cv_pct <= 10  # multiple peaks but tight together
 
-    if bimodal_significant:
+    if n_peaks >= 3:
         parts.append(
-            f"Distribution suggests **two distinct operating speeds** (BMC {bmc:.2f}). "
+            f"**{n_peaks} distinct operating speeds** detected in the curve. "
+            f"Each peak represents a different cycle rhythm — likely caused by "
+            f"material batch changes, setup adjustments, or different operating "
+            f"conditions within this period. Review run segments individually."
+        )
+    elif n_peaks == 2 and not peaks_close:
+        parts.append(
+            f"**Two distinct operating speeds** detected. "
             f"Check for setup changes, material batches, or shift handovers within this period."
         )
-    elif bimodal_minor:
+    elif n_peaks == 2 and peaks_close:
         parts.append(
-            f"Slight bimodality detected (BMC {bmc:.2f}) but cycle times are close together — "
-            f"likely natural variation around the mode rather than a true process split."
+            f"Two close peaks detected — likely natural variation around the mode "
+            f"rather than a genuine process split (CV {cv_pct:.1f}% is low)."
         )
     elif skew > 1.0:
         parts.append(
-            f"**Strong right skew** (skew {skew:+.2f}) — a tail of slow shots is pulling the "
+            f"**Strong right skew** (skew {skew:+.2f}) — a tail of slow shots pulls the "
             f"mean ({mean_ct:.1f}s) above the median ({median_ct:.1f}s). "
             f"Likely cause: lubrication, material drag, or intermittent feeding issues."
         )
     elif skew > 0.4:
         parts.append(
-            f"**Moderate right skew** (skew {skew:+.2f}) — occasional slow shots beyond normal rhythm. "
+            f"**Moderate right skew** (skew {skew:+.2f}) — occasional slow shots. "
             f"Mean {mean_ct:.1f}s vs median {median_ct:.1f}s."
         )
     elif abs(skew) <= 0.4:
         parts.append(
-            f"**Symmetric distribution** (skew {skew:+.2f}) — the tool is running at a "
-            f"consistent rhythm centred around {mean_ct:.1f}s."
+            f"**Symmetric distribution** (skew {skew:+.2f}) — stable, consistent rhythm "
+            f"centred around {mean_ct:.1f}s."
         )
     else:
-        parts.append(f"Distribution skew: {skew:+.2f} (mean {mean_ct:.1f}s, median {median_ct:.1f}s).")
+        parts.append(f"Skew {skew:+.2f} · Mean {mean_ct:.1f}s · Median {median_ct:.1f}s.")
 
     # ── Consistency + tolerance in one line ───────────────────────────
     if   cv_pct < 3:   cons = "excellent consistency (CV < 3%)"
@@ -1689,7 +1692,8 @@ def _ct_histogram_analysis(mean_ct, median_ct, std, cv_pct, skew, bmc,
         "**Shape guide** — "
         "Narrow peak = stable; "
         "Right tail = slow shots/drag; "
-        "Two humps = two operating speeds; "
+        "2 humps = two operating speeds; "
+        "3+ humps = multiple conditions (batches/shifts/setups); "
         "Wide/flat = high variation; "
         "Sharp spike = very consistent or sensor artefact."
     )
@@ -1854,6 +1858,18 @@ def plot_ct_histogram(df):
     kde_y   /= (n_kde * bw * np.sqrt(2 * np.pi))
     kde_y   *= n_kde * bin_size                              # scale to count axis
 
+    # Count meaningful peaks in KDE — more reliable than BMC for 3+ modes.
+    # A peak must rise/fall by at least 10% of the global max to count.
+    _prominence_threshold = kde_y.max() * 0.10
+    _is_peak = (
+        (np.r_[False, kde_y[1:] > kde_y[:-1]] &
+         np.r_[kde_y[:-1] > kde_y[1:], False])
+    )
+    # Filter out shallow bumps below prominence threshold
+    _peak_vals = kde_y[_is_peak]
+    n_peaks = int((_peak_vals > _prominence_threshold).sum())
+    n_peaks = max(n_peaks, 1)  # always at least 1
+
     fig.add_trace(go.Scatter(
         x=x_kde, y=kde_y, mode='lines', name='Distribution curve',
         line=dict(color='#E74C3C', width=2.5),
@@ -1935,7 +1951,7 @@ def plot_ct_histogram(df):
         if st.session_state[cache_key] is None:
             st.session_state[cache_key] = _ct_histogram_analysis(
                 mean_ct=mean_ct, median_ct=median_ct, std=std_kde,
-                cv_pct=cv_pct, skew=skew, bmc=bmc,
+                cv_pct=cv_pct, skew=skew, bmc=bmc, n_peaks=n_peaks,
                 pct_within=pct_within, n_runs=len(run_modes),
                 multi_run=multi_run, mode_min=mode_min, mode_max=mode_max,
                 lower_min=lower_min, upper_max=upper_max
