@@ -1070,25 +1070,27 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
 
                 total_shots_col = ('Total Shots' if 'Total Shots' in d_df.columns
                                    else 'total_shots')
-                d_df[f"Total {_shot_lbl}"] = d_df[total_shots_col].apply(lambda x: f"{x:,}")
+                # Store raw numeric series before overwriting with formatted string
+                _raw_total = d_df[total_shots_col]
+                d_df[f"Total {_shot_lbl}"] = _raw_total.apply(lambda x: f"{x:,}")
 
                 d_df[f"Normal {_shot_lbl}"] = d_df.apply(
                     lambda r: (
                         f"{r['normal_shots']:,} "
-                        f"({r['normal_shots'] / r[total_shots_col] * 100:.1f}%)"
-                        if r[total_shots_col] > 0 else "0 (0.0%)"
+                        f"({r['normal_shots'] / _raw_total.loc[r.name] * 100:.1f}%)"
+                        if _raw_total.loc[r.name] > 0 else "0 (0.0%)"
                     ), axis=1
                 )
 
                 if 'stopped_shots' not in d_df.columns:
-                    d_df['stopped_shots'] = d_df[total_shots_col] - d_df['normal_shots']
+                    d_df['stopped_shots'] = _raw_total - d_df['normal_shots']
 
                 stops_col = 'STOPS' if 'STOPS' in d_df.columns else 'stops'
                 d_df["Stop Events"] = d_df.apply(
                     lambda r: (
                         f"{r[stops_col]} "
-                        f"({r['stopped_shots'] / r[total_shots_col] * 100:.1f}%)"
-                        if r[total_shots_col] > 0 else "0 (0.0%)"
+                        f"({r['stopped_shots'] / _raw_total.loc[r.name] * 100:.1f}%)"
+                        if _raw_total.loc[r.name] > 0 else "0 (0.0%)"
                     ), axis=1
                 )
 
