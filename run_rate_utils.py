@@ -1973,9 +1973,12 @@ def plot_ct_histogram(df):
             skew = float(np.mean(((kde_data - mean_ct) / std_kde) ** 3))
         else:
             skew = 0.0
+        # Use stop_flag as the authoritative "within tolerance" measure —
+        # assigned per-shot against each run's own limits, not the global
+        # envelope which gets inflated by 999.9s sentinel values.
         pct_within = (
-            float(((kde_data >= lower_min) & (kde_data <= upper_max)).mean() * 100)
-            if lower_min is not None else None
+            float(df.loc[all_cts_capped.index, 'stop_flag'].eq(0).mean() * 100)
+            if 'stop_flag' in df.columns else None
         )
         # Bimodality coefficient (Sarle's b — >0.555 suggests bimodal)
         if n_kde > 3:
@@ -2005,7 +2008,7 @@ def plot_ct_histogram(df):
             )
         if pct_within is not None:
             prompt_lines.append(
-                f"% shots within tolerance envelope ({lower_min:.2f}s–{upper_max:.2f}s): {pct_within:.1f}%"
+                f"% shots classified normal (within their run's tolerance): {pct_within:.1f}%"
             )
 
         data_summary = "\n".join(prompt_lines)
