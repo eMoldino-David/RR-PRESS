@@ -1233,7 +1233,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                             .value_counts()
                             .reindex(results["bucket_labels"], fill_value=0))
                 fig_b = (px.bar(b_counts,
-                                title="Total Time Bucket Analysis",
+                                title="",
                                 labels={"index": "Duration (min)", "value": "Occurrences"},
                                 text_auto=True,
                                 color=b_counts.index,
@@ -1261,7 +1261,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             if run_summary_df is not None and not run_summary_df.empty:
                 rr_utils.plot_trend_chart(
                     run_summary_df, 'RUN ID', 'STABILITY %',
-                    "Stability per Run", "Run ID", "Run Rate Time Stability (%)", is_stability=True
+                    "", "Run ID", "Run Rate Time Stability (%)", is_stability=True
                 )
                 with st.expander("View Stability Data Table", expanded=False):
                     df_renamed = rr_utils.get_renamed_summary_df(run_summary_df)
@@ -1327,7 +1327,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 df=run_summary_df, x_col='RUN ID',
                 mttr_col='MTTR (min)', mtbf_col='MTBF (min)',
                 shots_col='Total Shots',
-                title="MTTR, MTBF & Shot Count per Run"
+                title=""
             )
             with st.expander("View MTTR/MTBF Data Table & Correlation Analysis",
                              expanded=False):
@@ -1393,7 +1393,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             if not hourly_summary_df.empty:
                 rr_utils.plot_trend_chart(
                     hourly_summary_df, 'hour', 'stability_index',
-                    "Hourly Stability Trend", "Hour of Day", "Run Rate Time Stability (%)",
+                    "", "Hour of Day", "Run Rate Time Stability (%)",
                     is_stability=True
                 )
                 with st.expander("View Stability Data", expanded=False):
@@ -1409,7 +1409,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             rr_utils.plot_mttr_mtbf_chart(
                 df=hourly_summary_df, x_col='hour',
                 mttr_col='mttr_min', mtbf_col='mtbf_min', shots_col='total_shots',
-                title="Hourly MTTR & MTBF Trend"
+                title=""
             )
             with st.expander("View MTTR/MTBF Data", expanded=False):
                 df_renamed = rr_utils.get_renamed_summary_df(hourly_summary_df)
@@ -1427,7 +1427,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
 # --- 4. MAIN APP ENTRY POINT ---
 # ==============================================================================
 
-APP_VERSION = "v3.53"
+APP_VERSION = "v4.0"
 
 def run_run_rate_ui():
 
