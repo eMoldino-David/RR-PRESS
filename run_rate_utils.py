@@ -1689,7 +1689,51 @@ def plot_ct_histogram(df):
     st.plotly_chart(fig, width='stretch')
 
 
-def plot_cusum_chart(df):
+def plot_trend_chart(df, x_col, y_col, title, x_title, y_title,
+                     is_stability=False, y_range=None):
+    """Generic trend line used for stability-per-run and hourly stability views."""
+    if y_col not in df.columns:
+        return
+    plot_df = df.dropna(subset=[y_col])
+    if plot_df.empty:
+        return
+
+    marker_config = {}
+    if is_stability:
+        marker_config['color'] = [
+            PASTEL_COLORS['red'] if v <= 50
+            else PASTEL_COLORS['orange'] if v <= 70
+            else PASTEL_COLORS['green']
+            for v in plot_df[y_col]
+        ]
+        marker_config['size'] = 10
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=plot_df[x_col], y=plot_df[y_col], mode='lines+markers',
+        name=y_title,
+        line=dict(color='royalblue' if not is_stability else '#FFFFFF', width=2),
+        marker=marker_config
+    ))
+    if is_stability:
+        for y0, y1, c in [(0, 50, PASTEL_COLORS['red']),
+                          (50, 70, PASTEL_COLORS['orange']),
+                          (70, 100, PASTEL_COLORS['green'])]:
+            fig.add_shape(type='rect', xref='paper', x0=0, x1=1, y0=y0, y1=y1,
+                          fillcolor=c, opacity=0.15, line_width=0, layer='below')
+
+    fig.update_layout(
+        title=title,
+        yaxis=dict(title=y_title, range=y_range or ([0, 105] if is_stability else None)),
+        xaxis_title=x_title,
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+        xaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.08)'),
+    )
+    st.plotly_chart(fig, width='stretch')
+
+
+def plot_mttr_mtbf_chart(df, x_col, mttr_col, mtbf_col, shots_col, title):
     """
     CUSUM (Cumulative Sum) control chart on normal-stroke cycle times.
     Detects sustained process shifts (tool wear, material drift) that an

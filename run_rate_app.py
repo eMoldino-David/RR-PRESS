@@ -953,13 +953,8 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         )
         st.markdown("---")
 
-        # ── Chart 3: CUSUM Control Chart ──────────────────────────────────────
-        st.markdown("#### 📊 Chart 3 — CUSUM Control Chart")
-        rr_utils.plot_cusum_chart(results['processed_df'])
-        st.markdown("---")
-
-        # ── Chart 4: CT Histogram ──────────────────────────────────────────────
-        st.markdown("#### 📊 Chart 4 — Cycle Time Distribution")
+        # ── Chart 3: CT Histogram ──────────────────────────────────────────────
+        st.markdown("#### 📊 Chart 3 — Cycle Time Distribution")
         rr_utils.plot_ct_histogram(results['processed_df'])
     else:
         rr_utils.plot_shot_bar_chart(
