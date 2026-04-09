@@ -1266,7 +1266,16 @@ def _ct_histogram_analysis(mean_ct, median_ct, std, cv_pct, skew, bmc, n_peaks,
 
     peaks_close = bmc > 0.555 and cv_pct <= 10
 
-    if n_peaks >= 3:
+    # When CV < 3% the distribution is essentially a spike — skew is numerical noise
+    # from sub-second timing jitter, not a meaningful process signal. Suppress it.
+    if cv_pct < 3:
+        parts.append(
+            f"**Very tight distribution** (CV {cv_pct:.1f}%) — "
+            f"the process is running at a single consistent rhythm around {mean_ct:.1f}s. "
+            f"Any apparent skew at this precision level reflects sensor timing jitter, "
+            f"not a genuine process asymmetry."
+        )
+    elif n_peaks >= 3:
         parts.append(
             f"**{n_peaks} distinct speed clusters** visible in the curve — "
             f"the tool operated at {n_peaks} different rhythms within this period. "
@@ -1287,17 +1296,17 @@ def _ct_histogram_analysis(mean_ct, median_ct, std, cv_pct, skew, bmc, n_peaks,
         )
     elif skew > 1.0:
         parts.append(
-            f"**Strong right skew** (skew {skew:+.2f}) — a tail of slow cycles pulling "
+            f"**Right skew** (skew {skew:+.2f}) — a tail of slower normal cycles pulling "
             f"the mean ({mean_ct:.1f}s) above the median ({median_ct:.1f}s). "
             f"Common cause categories: progressive degradation (wear, build-up, fatigue), "
             f"intermittent resistance or restriction, or feedstock/material inconsistency."
         )
-    elif skew > 0.4:
+    elif skew < -1.0:
         parts.append(
-            f"**Moderate right skew** (skew {skew:+.2f}) — occasional slow cycles "
-            f"beyond normal rhythm. Mean {mean_ct:.1f}s vs median {median_ct:.1f}s. "
-            f"Common cause categories: sporadic process resistance, sensor sensitivity, "
-            f"or minor material variation."
+            f"**Left skew** (skew {skew:+.2f}) — a tail of faster-than-mode normal cycles. "
+            f"Mean ({mean_ct:.1f}s) below median ({median_ct:.1f}s). "
+            f"Common cause categories: occasional fast-cycling (short shots, "
+            f"partial fills, or process running ahead of approved rate)."
         )
     elif abs(skew) <= 0.4:
         parts.append(
@@ -1305,7 +1314,7 @@ def _ct_histogram_analysis(mean_ct, median_ct, std, cv_pct, skew, bmc, n_peaks,
             f"centred around {mean_ct:.1f}s. No dominant cause for concern."
         )
     else:
-        parts.append(f"Skew {skew:+.2f} · Mean {mean_ct:.1f}s · Median {median_ct:.1f}s.")
+        parts.append(f"Mild skew {skew:+.2f} · Mean {mean_ct:.1f}s · Median {median_ct:.1f}s.")
 
     if   cv_pct < 3:   cons = "excellent consistency (CV < 3%)"
     elif cv_pct < 6:   cons = "good consistency (CV 3–6%)"
@@ -1374,7 +1383,10 @@ def plot_ct_histogram(df):
     else:
         lower_min = lower_max = upper_min = upper_max = None
 
-    x_cap = (upper_max * 4) if upper_max else (mode_max * 6 if mode_max else 200)
+    # Cap at 99th percentile of all shots — far more sensible than upper_max * 4
+    # which stretches the axis to 400s for a 97s tool just because a few hard-stops exist.
+    p99 = float(np.percentile(all_cts.dropna(), 99)) if not all_cts.empty else 200
+    x_cap = max(p99, upper_max * 1.5 if upper_max else p99)
     all_cts_capped = all_cts[all_cts <= x_cap]
     n_excluded = (all_cts > x_cap).sum()
     n_total = len(all_cts_capped)
@@ -1454,7 +1466,7 @@ def plot_ct_histogram(df):
 
     fig.add_trace(go.Scatter(
         x=x_kde, y=kde_y, mode='lines', name='Distribution curve',
-        line=dict(color='#E74C3C', width=2.5),
+        line=dict(color='#FFFFFF', width=2.5),
         hovertemplate='CT: %{x:.2f}s<br>Density: %{y:.1f}<extra>KDE</extra>'
     ))
 
