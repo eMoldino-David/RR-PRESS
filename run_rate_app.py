@@ -122,7 +122,7 @@ def render_risk_tower(df_all_tools, run_interval_hours, min_shots_filter, tolera
 
 def render_trends_tab(df_tool, tolerance, downtime_gap_tolerance,
                       run_interval_hours, min_shots_filter,
-                      tool_id_selection='Unknown', press_mode=False):
+                      tool_id_selection='Unknown'):
     """Renders the Trends Analysis tab."""
     st.header("Historical Performance Trends")
     st.info(
@@ -215,8 +215,8 @@ def render_trends_tab(df_tool, tolerance, downtime_gap_tolerance,
             'Efficiency (%)': efficiency,
             'MTTR (min)': mttr,
             'MTBF (min)': mtbf,
-            'Total Shots' if not press_mode else 'Total Strokes': total_shots,
-            'Normal Shots' if not press_mode else 'Normal Strokes': normal_shots,
+            'Total Shots': total_shots,
+            'Normal Shots': normal_shots,  # #11 fix: was missing, caused blank in PPTX
             'Stop Events': stops,
             'Production Time (h)': prod_time / 3600,
             'Downtime (h)': downtime / 3600,
@@ -230,15 +230,11 @@ def render_trends_tab(df_tool, tolerance, downtime_gap_tolerance,
                  .sort_values('SortKey', ascending=True)
                  .drop(columns=['SortKey']))
 
-    _shots_col  = 'Total Strokes'  if press_mode else 'Total Shots'
-    _stops_col  = 'Stop Events'
-    _normal_col = 'Normal Strokes' if press_mode else 'Normal Shots'
-
     st.dataframe(
         df_trends.style.format({
             'Stability Index (%)': '{:.1f}', 'Efficiency (%)': '{:.1f}',
             'MTTR (min)': '{:.1f}', 'MTBF (min)': '{:.1f}',
-            _shots_col: '{:,.0f}', _stops_col: '{:,.0f}',
+            'Total Shots': '{:,.0f}', 'Stop Events': '{:,.0f}',
             'Production Time (h)': '{:.1f}', 'Downtime (h)': '{:.1f}',
         }).background_gradient(subset=['Stability Index (%)'],
                                cmap='RdYlGn', vmin=0, vmax=100),
@@ -297,15 +293,28 @@ def render_trends_tab(df_tool, tolerance, downtime_gap_tolerance,
 
 
 def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_tolerance,
-                     run_interval_hours, show_approved_ct, min_shots_filter,
-                     press_mode=False):
+                     run_interval_hours, show_approved_ct, min_shots_filter):
     """Renders the main Run Rate Dashboard tab."""
 
-    # Terminology helper — swaps labels when in press/stamping mode
-    def _T(shot_term, stroke_term):
-        return stroke_term if press_mode else shot_term
+    analysis_level = st.radio(
+        "Select Analysis Level",
+        options=["Daily (by Run)", "Weekly (by Run)", "Monthly (by Run)", "Custom Period (by Run)"],
+        horizontal=True,
+        key="rr_analysis_level"
+    )
 
-    # SPM / SPH / CT unit toggle (only shown in press mode)
+    # Press / stamping mode — auto-detected from tooling_type, overridable by toggle
+    _press_auto = (
+        df_tool['tooling_type'].str.lower().str.contains('press|stamp', na=False).any()
+        if 'tooling_type' in df_tool.columns else False
+    )
+    press_mode = st.toggle(
+        "Press / Stamping Mode",
+        value=bool(_press_auto),
+        key="rr_press_mode",
+        help="Enables stroke rate charts (SPM/SPH) for press and stamping tools."
+    )
+
     if press_mode:
         stroke_unit = st.radio(
             "Mode Display Unit",
@@ -316,14 +325,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             help="SPM = Strokes Per Minute  |  SPH = Strokes Per Hour  |  CT = Cycle Time (sec)"
         )
     else:
-        stroke_unit = "CT"  # non-press always shows CT
-
-    analysis_level = st.radio(
-        "Select Analysis Level",
-        options=["Daily (by Run)", "Weekly (by Run)", "Monthly (by Run)", "Custom Period (by Run)"],
-        horizontal=True,
-        key="rr_analysis_level"
-    )
+        stroke_unit = "CT"
 
     st.markdown("---")
 
@@ -344,9 +346,10 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         display preserves those pre-computed mode_ct, stop_flag, lower_limit
         and upper_limit values — no re-computation ever happens on a subset.
 
-        CRCG alignment: stop_flag is reset to 0 for the first shot of every
-        run (mask_first_shot | is_new_run) so that a hard-stop or abnormal CT
-        at the very start of a run is never counted as a stop event.
+        The run-start stop_flag reset (with startup CT guard) now lives inside
+        RunRateCalculator._calculate_all_metrics. A post-processing reset here
+        would override the guard and re-introduce the wide-bar bug for high-CT
+        first-of-run shots (e.g. machine restarting after a multi-day gap).
         """
         base_calc = rr_utils.RunRateCalculator(
             df, tolerance, downtime_gap_tolerance,
@@ -354,20 +357,6 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         )
         df_processed = base_calc.results.get("processed_df", pd.DataFrame())
         if not df_processed.empty:
-            # Apply CRCG run-start reset
-            mask_first = df_processed['tool_id'] != df_processed['tool_id'].shift(1)
-            is_new_run = df_processed['time_diff_sec'] > (interval_hours * 3600)
-            df_processed.loc[mask_first | is_new_run, 'stop_flag'] = 0
-            df_processed['prev_stop_flag'] = (
-                df_processed.groupby('tool_id')['stop_flag'].shift(1, fill_value=0)
-            )
-            df_processed['stop_event'] = (
-                (df_processed['stop_flag'] == 1)
-                & (df_processed['prev_stop_flag'] == 0)
-            )
-            # #3 fix: recalculate run_group after stop_flag reset so bucket
-            # analysis and run counts reflect the corrected run boundaries
-            df_processed['run_group'] = df_processed['stop_event'].cumsum()
             df_processed['week'] = df_processed['shot_time'].dt.isocalendar().week
             df_processed['year'] = df_processed['shot_time'].dt.isocalendar().year
             df_processed['date'] = df_processed['shot_time'].dt.date
@@ -531,7 +520,17 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
     run_count = 0
     if 'by Run' in analysis_level and not df_view.empty:
         run_shot_counts = df_view.groupby('run_label')['run_label'].transform('count')
-        df_view = df_view[run_shot_counts >= min_shots_filter]
+        df_view = df_view[run_shot_counts >= min_shots_filter].copy()
+        # Re-label surviving runs consecutively in chronological order.
+        # Without this, run_label has gaps (e.g. Run 001,002,003,005,...) while
+        # calculate_run_summaries below renumbers consecutively (Run 001..00M),
+        # causing the bucket-trend pivot reindex to drop one row to all zeros.
+        if not df_view.empty and 'run_id' in df_view.columns:
+            _first_shot = (df_view.groupby('run_id')['shot_time']
+                           .min().sort_values())
+            _relabel = {rid: f"Run {i+1:03d}"
+                        for i, rid in enumerate(_first_shot.index)}
+            df_view['run_label'] = df_view['run_id'].map(_relabel)
         run_count = df_view['run_label'].nunique() if not df_view.empty else 0
     elif not df_view.empty and 'run_label' in df_view.columns:
         run_count = df_view['run_label'].nunique()
@@ -759,9 +758,9 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         n_p = (n_s / t_s * 100) if t_s > 0 else 0
         s_p = (s_s / t_s * 100) if t_s > 0 else 0
         with c1:
-            st.metric(_T("Total Shots", "Total Strokes"), f"{t_s:,}")
+            st.metric("Total Shots", f"{t_s:,}")
         with c2:
-            st.metric(_T("Normal Shots", "Normal Strokes"), f"{n_s:,}")
+            st.metric("Normal Shots", f"{n_s:,}")
             st.markdown(
                 f'<span style="background-color:{rr_utils.PASTEL_COLORS["green"]};'
                 f'color:#0E1117;padding:3px 8px;border-radius:10px;'
@@ -773,51 +772,39 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             st.markdown(
                 f'<span style="background-color:{rr_utils.PASTEL_COLORS["red"]};'
                 f'color:#0E1117;padding:3px 8px;border-radius:10px;'
-                f'font-size:0.8rem;font-weight:bold;">'
-                f'{s_p:.1f}% {_T("Stopped Shots", "Stopped Strokes")}</span>',
+                f'font-size:0.8rem;font-weight:bold;">{s_p:.1f}% Stopped Shots</span>',
                 unsafe_allow_html=True
             )
 
     # ------------------------------------------------------------------
-    # 2. Cycle time display (reads from globally-computed df_view columns)
-    # ------------------------------------------------------------------
-    # ------------------------------------------------------------------
-    # 2. Cycle time / SPM display
+    # 2. Cycle time / mode display (unit-aware: CT, SPM or SPH)
     # ------------------------------------------------------------------
     def fmt_metric(min_val, max_val, to_spm=False):
         if pd.isna(min_val) or pd.isna(max_val):
             return "N/A"
         if to_spm:
             # Limits invert under reciprocal transform: high CT → low SPM
-            # Use temp vars to avoid overwriting min_val before it's used
-            _lo = rr_utils.ct_to_stroke_rate(max_val, _su)
-            _hi = rr_utils.ct_to_stroke_rate(min_val, _su)
-            min_val, max_val = _lo, _hi
+            _lo = rr_utils.ct_to_stroke_rate(max_val, stroke_unit)
+            _hi = rr_utils.ct_to_stroke_rate(min_val, stroke_unit)
+            min_val, max_val = float(np.atleast_1d(_lo)[0]), float(np.atleast_1d(_hi)[0])
             if pd.isna(min_val) or pd.isna(max_val):
                 return "N/A"
         if abs(min_val - max_val) < 0.005:
             return f"{min_val:.2f}"
         return f"{min_val:.2f} – {max_val:.2f}"
 
-    _pm = press_mode  # shorthand
-    _su = stroke_unit
-    # Convert to stroke rate only when press mode AND not viewing as raw CT
-    _convert = _pm and _su != "CT"
+    _convert = press_mode and stroke_unit != "CT"
 
-    if _su == "CT" or not _pm:
+    if stroke_unit == "CT" or not press_mode:
         _lbl_mode  = "Mode Cycle Time (sec)"
-        _lbl_lower = "Lower Limit (sec)"
-        _lbl_upper = "Upper Limit (sec)"
-        _lbl_app   = "Approved CT (sec)"
         _lbl_c1    = "Lower Limit (sec)"
         _lbl_c3    = "Upper Limit (sec)"
+        _lbl_app   = "Approved CT (sec)"
     else:
-        _lbl_mode  = f"Mode {_su}"
-        _lbl_lower = f"Upper {_su} Limit"   # limits invert under reciprocal
-        _lbl_upper = f"Lower {_su} Limit"
-        _lbl_app   = f"Approved {_su}"
-        _lbl_c1    = f"Upper {_su} Limit"
-        _lbl_c3    = f"Lower {_su} Limit"
+        _lbl_mode  = f"Mode {stroke_unit}"
+        _lbl_c1    = f"Upper {stroke_unit} Limit"   # limits invert under reciprocal
+        _lbl_c3    = f"Lower {stroke_unit} Limit"
+        _lbl_app   = f"Approved {stroke_unit}"
 
     _mode_lo = summary_metrics.get('min_mode_ct', 0)
     _mode_hi = summary_metrics.get('max_mode_ct', 0)
@@ -855,8 +842,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                     st.metric(_lbl_mode, _fmt_mode)
             c3.metric(_lbl_c3, _fmt_upper)
 
-    # Always show raw Mode CT (sec) as a reference when displaying in rate units,
-    # since all calculations are derived from CT not the converted rate value.
+    # Always show raw CT reference when displaying in rate units
     if _convert:
         _raw_mode  = fmt_metric(_mode_lo, _mode_hi, to_spm=False)
         _raw_lower = fmt_metric(_low_lo,  _low_hi,  to_spm=False)
@@ -916,13 +902,13 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
     st.markdown("---")
 
     # ------------------------------------------------------------------
-    # 3. Stroke / cycle time chart
+    # 3. Shot / stroke charts
     # ------------------------------------------------------------------
     time_agg = ('hourly' if "Daily" in analysis_level
                 else 'daily' if 'Weekly' in analysis_level
                 else 'weekly')
 
-    # stroke_unit for charts — CT view falls back to SPM for rate charts
+    # stroke_unit for rate charts — CT mode falls back to SPM for bucketed chart
     _chart_su = stroke_unit if stroke_unit != "CT" else "SPM"
 
     if press_mode:
@@ -933,17 +919,9 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 {'1-minute' if _chart_su == 'SPM' else '1-hour'} time buckets.
                 The count in each bucket *is* the {_chart_su} for that period.
 
-                **Stacked bars:** Blue = normal strokes, Red = stopped strokes within that bucket.
-                A bucket that is mostly red indicates the press was struggling during that period.
-
-                **Mode line** (dotted grey) = the press's own proven rhythm derived from the
-                mode cycle time. Buckets consistently below this line indicate underperformance.
-
-                **Run boundaries** (purple dashed verticals) show where the run interval
-                threshold separated distinct production runs.
-
-                This is the primary display used in **Vorne XL** and **Schuler DigiSens**
-                press monitoring systems.
+                **Stacked bars:** Blue = normal strokes, Red = stopped strokes.
+                **Mode line** (dotted grey) = proven rhythm from mode CT.
+                **Run boundaries** (purple dashed) show where distinct runs start.
                 """)
             rr_utils.plot_stroke_rate_chart(
                 results['processed_df'], results.get('mode_ct'),
@@ -954,19 +932,11 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
         with st.expander("ℹ️ How to read this chart — Raw Cycle Time per Shot", expanded=False):
             st.markdown("""
             **What it shows:** Every individual stroke plotted at its actual cycle time
-            in seconds. This is the raw signal that all metrics are derived from.
+            in seconds. This is the raw signal all metrics are derived from.
 
-            **Green band** = tolerance window (mode CT ± tolerance %). Strokes inside
-            the band are classified normal (blue). Strokes outside are stopped (red).
-
-            **Why look at this view?**
-            - Validates that the tolerance band is set correctly
-            - Shows the exact shape of stop events — a gradual climb suggests tool drag
-              or material buildup; sudden spikes suggest jams or sensor faults
-            - Reveals micro-variation within the normal band (tightness = consistency)
-
-            **Hard-stop shots** (CT = 999.9s) appear as very tall red bars — these are
-            press safety stops where the machine held until reset.
+            **Green band** = tolerance window (mode CT ± tolerance %).
+            Blue = normal strokes, Red = stopped/out-of-tolerance strokes.
+            **Hard-stop shots** (CT = 999.9s) appear as very tall red bars.
             """)
         rr_utils.plot_shot_bar_chart(
             results['processed_df'],
@@ -984,10 +954,10 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
             time_agg=time_agg,
             show_approved_ct=show_approved_ct,
             press_mode=False,
-            stroke_unit=_chart_su
+            stroke_unit=stroke_unit
         )
 
-    # ── CT Histogram — all tool types, collapsed by default ───────────────────
+    # CT Histogram — all tool types, collapsed by default
     with st.expander("📊 Cycle Time Distribution", expanded=False):
         rr_utils.plot_ct_histogram(results['processed_df'])
 
@@ -1008,7 +978,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
 
         df_shot_data = results['processed_df'][cols_to_show].copy()
         df_shot_data.rename(columns=rename_map, inplace=True)
-        st.dataframe(rr_utils.format_summary_table(df_shot_data))
+        st.dataframe(df_shot_data)
 
     st.markdown("---")
 
@@ -1057,9 +1027,9 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
 
                 total_shots_col = ('Total Shots' if 'Total Shots' in d_df.columns
                                    else 'total_shots')
-                d_df[_T("Total shots", "Total Strokes")] = d_df[total_shots_col].apply(lambda x: f"{x:,}")
+                d_df["Total shots"] = d_df[total_shots_col].apply(lambda x: f"{x:,}")
 
-                d_df[_T("Normal Shots", "Normal Strokes")] = d_df.apply(
+                d_df["Normal Shots"] = d_df.apply(
                     lambda r: (
                         f"{r['normal_shots']:,} "
                         f"({r['normal_shots'] / r[total_shots_col] * 100:.1f}%)"
@@ -1112,10 +1082,8 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 d_df.rename(columns=col_rename, inplace=True)
 
                 final_cols = [
-                    'RUN ID', 'Period (date/time from to)',
-                    _T("Total shots", "Total Strokes"),
-                    _T("Normal Shots", "Normal Strokes"),
-                    'Stop Events', 'Mode CT (for the run)',
+                    'RUN ID', 'Period (date/time from to)', 'Total shots',
+                    'Normal Shots', 'Stop Events', 'Mode CT (for the run)',
                     'Approved CT', 'Lower limit CT (sec)', 'Upper Limit CT (sec)',
                     'Total Run duration (d/h/m)', 'Production Time (d/h/m)',
                     'Downtime (d/h/m)', 'MTTR (min)', 'MTBF (min)', 'Stability (%)'
@@ -1128,13 +1096,13 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 for col, fmtstr in [
                     ('Mode CT (for the run)', '{:.2f}'), ('Approved CT', '{:.2f}'),
                     ('Lower limit CT (sec)', '{:.2f}'), ('Upper Limit CT (sec)', '{:.2f}'),
-                    ('MTTR (min)', '{:.2f}'), ('MTBF (min)', '{:.2f}'),
-                    ('Stability (%)', '{:.2f}'),
+                    ('MTTR (min)', '{:.1f}'), ('MTBF (min)', '{:.1f}'),
+                    ('Stability (%)', '{:.1f}'),
                 ]:
                     if col in d_df.columns:
                         fmt[col] = fmtstr
 
-                st.dataframe(rr_utils.format_summary_table(d_df[final_cols]).style.format(fmt), width='stretch')
+                st.dataframe(d_df[final_cols].style.format(fmt), width='stretch')
 
         c1, c2 = st.columns(2)
         with c1:
@@ -1163,7 +1131,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                         'time_bucket': 'Time Bucket', 'run_end_time': 'Run End Date/Time',
                         'run_label': 'Run ID'
                     })
-                    st.dataframe(rr_utils.format_summary_table(df_bucket_data))
+                    st.dataframe(df_bucket_data)
             else:
                 st.info("No complete runs.")
 
@@ -1178,7 +1146,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                     df_renamed = rr_utils.get_renamed_summary_df(run_summary_df)
                     if not show_approved_ct and 'Approved CT' in df_renamed.columns:
                         df_renamed = df_renamed.drop(columns=['Approved CT'])
-                    st.dataframe(rr_utils.format_summary_table(df_renamed))
+                    st.dataframe(df_renamed)
             else:
                 st.info("No runs to analyse.")
 
@@ -1245,7 +1213,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 df_renamed = rr_utils.get_renamed_summary_df(run_summary_df)
                 if not show_approved_ct and 'Approved CT' in df_renamed.columns:
                     df_renamed = df_renamed.drop(columns=['Approved CT'])
-                st.dataframe(rr_utils.format_summary_table(df_renamed))
+                st.dataframe(df_renamed)
                 if detailed_view:
                     analysis_df = pd.DataFrame()
                     if trend_summary_df is not None and not trend_summary_df.empty:
@@ -1271,7 +1239,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 df_renamed = rr_utils.get_renamed_summary_df(hourly_summary_df)
                 if not show_approved_ct and 'Approved CT' in df_renamed.columns:
                     df_renamed = df_renamed.drop(columns=['Approved CT'])
-                st.dataframe(rr_utils.format_summary_table(df_renamed), width="stretch")
+                st.dataframe(df_renamed, width='stretch')
             else:
                 st.info("No hourly data available.")
 
@@ -1311,7 +1279,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                     df_renamed = rr_utils.get_renamed_summary_df(hourly_summary_df)
                     if not show_approved_ct and 'Approved CT' in df_renamed.columns:
                         df_renamed = df_renamed.drop(columns=['Approved CT'])
-                    st.dataframe(rr_utils.format_summary_table(df_renamed))
+                    st.dataframe(df_renamed)
             else:
                 st.info("No hourly stability data.")
 
@@ -1326,7 +1294,7 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 df_renamed = rr_utils.get_renamed_summary_df(hourly_summary_df)
                 if not show_approved_ct and 'Approved CT' in df_renamed.columns:
                     df_renamed = df_renamed.drop(columns=['Approved CT'])
-                st.dataframe(rr_utils.format_summary_table(df_renamed))
+                st.dataframe(df_renamed)
             if detailed_view:
                 with st.expander("🤖 View MTTR/MTBF Correlation Analysis", expanded=False):
                     st.info("Automated correlation analysis is best viewed in 'Run' mode.")
@@ -1521,26 +1489,11 @@ def run_run_rate_ui():
         # Show Risk Tower in tab1. Dashboard and Trends need a specific tool.
         df_for_dashboard = pd.DataFrame()
         tool_id_for_dashboard_display = "No Tool Selected"
-        press_mode = False
     else:
         df_for_dashboard = df_filtered[
             df_filtered[id_col] == dashboard_tool_id_selection
         ]
         tool_id_for_dashboard_display = dashboard_tool_id_selection
-        # Detect press/stamping mode from the tooling_type column of the selected tool
-        press_mode = (
-            rr_utils.is_press_mode(df_for_dashboard['tooling_type'])
-            if 'tooling_type' in df_for_dashboard.columns
-            else False
-        )
-        if press_mode:
-            st.sidebar.markdown(
-                "<div style='background:#002060;color:#fff;padding:6px 10px;"
-                "border-radius:6px;font-size:0.8rem;margin-top:4px;'>"
-                "🔨 <strong>Press / Stamping Mode</strong><br>"
-                "Metrics displayed in SPM</div>",
-                unsafe_allow_html=True
-            )
 
     # ------------------------------------------------------------------
     # Tabs
@@ -1557,8 +1510,7 @@ def run_run_rate_ui():
             render_dashboard(
                 df_for_dashboard, tool_id_for_dashboard_display,
                 tolerance, downtime_gap_tolerance, run_interval_hours,
-                show_approved_ct, min_shots_filter,
-                press_mode=press_mode
+                show_approved_ct, min_shots_filter
             )
         else:
             st.info("👈 Select a specific tool from the **Dashboard View** dropdown in the sidebar to view its dashboard.")
@@ -1568,8 +1520,7 @@ def run_run_rate_ui():
             render_trends_tab(
                 df_for_dashboard, tolerance, downtime_gap_tolerance,
                 run_interval_hours, min_shots_filter,
-                tool_id_selection=tool_id_for_dashboard_display,
-                press_mode=press_mode
+                tool_id_selection=tool_id_for_dashboard_display
             )
         else:
             st.info("👈 Select a specific tool from the **Dashboard View** dropdown in the sidebar to view trends.")
