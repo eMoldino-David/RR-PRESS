@@ -938,25 +938,9 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
 
     df['color'] = np.where(df['stop_flag'] == 1, PASTEL_COLORS['red'], '#3498DB')
 
-    downtime_gap_indices = df[df['adj_ct_sec'] != df['actual_ct']].index
-    valid_downtime_gap_indices = downtime_gap_indices[downtime_gap_indices > 0]
-    normal_shot_indices = df.index.difference(valid_downtime_gap_indices)
-
-    if not normal_shot_indices.empty:
-        shot_index_in_second = df.loc[normal_shot_indices].groupby('shot_time').cumcount()
-        time_offset = pd.to_timedelta(shot_index_in_second * 0.2, unit='s')
-        df.loc[normal_shot_indices, 'plot_time'] = (
-            df.loc[normal_shot_indices, 'shot_time'] + time_offset
-        )
-
-    if not valid_downtime_gap_indices.empty:
-        prev_shot_timestamps = df['shot_time'].shift(1).loc[valid_downtime_gap_indices]
-        df.loc[valid_downtime_gap_indices, 'plot_time'] = prev_shot_timestamps
-
-    # #7 fix: use the actual first index rather than hardcoded 0
-    _first_idx = df.index[0]
-    if pd.isna(df.loc[_first_idx, 'plot_time']) if 'plot_time' in df.columns else True:
-        df.loc[_first_idx, 'plot_time'] = df.loc[_first_idx, 'shot_time']
+    # Each shot plots at its actual timestamp — no offset needed since
+    # we now plot actual_ct (not adj_ct_sec) so no bar displacement required.
+    df['plot_time'] = df['shot_time']
 
     _stroke_label = "Normal Stroke" if press_mode else "Normal Shot"
     _stop_label   = "Stopped Stroke" if press_mode else "Stopped Shot"
