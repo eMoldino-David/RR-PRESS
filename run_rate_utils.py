@@ -923,14 +923,14 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
     # In press mode convert y values to SPM or SPH (60/CT or 3600/CT)
     if press_mode:
         _conv = lambda v: ct_to_stroke_rate(v, stroke_unit)
-        df['_y'] = _conv(df['adj_ct_sec'].values)
+        df['_y'] = _conv(df['actual_ct'].values)
         _lower_y = _conv(upper_limit) if upper_limit else None   # limits invert
         _upper_y = _conv(lower_limit) if lower_limit else None
         _mode_y  = _conv(mode_ct) if isinstance(mode_ct, (int, float)) else None
         _y_label = f"Strokes Per {'Hour' if stroke_unit == 'SPH' else 'Minute'} ({stroke_unit})"
         _title   = f"Run Rate – Stroke Chart ({stroke_unit})"
     else:
-        df['_y'] = df['adj_ct_sec']
+        df['_y'] = df['actual_ct']
         _lower_y, _upper_y = lower_limit, upper_limit
         _mode_y  = mode_ct if isinstance(mode_ct, (int, float)) else None
         _y_label = "Cycle Time (sec)"
