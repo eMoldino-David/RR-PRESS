@@ -1044,9 +1044,11 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
         y_cap = max((_mode_y or 10) * 2, 20)
         y_cap = min(y_cap, 2000)
     else:
-        y_axis_cap_val = (_mode_y if _mode_y else
-                          (df['mode_ct'].mean() if 'mode_ct' in df.columns else 50))
-        y_cap = min(max(y_axis_cap_val * 2, 50), 500)
+        # 99th percentile of actual_ct — shows all real shots including slow ones,
+        # while 999.9 hard-stop outliers don't destroy the scale
+        _cts = df['actual_ct'].dropna()
+        _p99 = float(np.percentile(_cts, 99)) if len(_cts) > 0 else 200
+        y_cap = max(_p99 * 1.2, (_mode_y or 50) * 1.5)
 
     fig.update_layout(
         title=_title, xaxis_title="Date / Time",
