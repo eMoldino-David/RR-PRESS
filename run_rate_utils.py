@@ -938,9 +938,14 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
 
     df['color'] = np.where(df['stop_flag'] == 1, PASTEL_COLORS['red'], '#3498DB')
 
-    # Each shot plots at its actual timestamp — no offset needed since
-    # we now plot actual_ct (not adj_ct_sec) so no bar displacement required.
-    df['plot_time'] = df['shot_time']
+    # In press/stamping mode with fast CTs (e.g. 0.4s), multiple shots can land
+    # within the same second — apply a small offset to separate them visually.
+    # For injection/normal mode (CTs of several seconds+) this is never needed.
+    if press_mode:
+        dupes = df.groupby('shot_time').cumcount()
+        df['plot_time'] = df['shot_time'] + pd.to_timedelta(dupes * 0.05, unit='s')
+    else:
+        df['plot_time'] = df['shot_time']
 
     _stroke_label = "Normal Stroke" if press_mode else "Normal Shot"
     _stop_label   = "Stopped Stroke" if press_mode else "Stopped Shot"
