@@ -938,10 +938,11 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
 
     df['color'] = np.where(df['stop_flag'] == 1, PASTEL_COLORS['red'], '#3498DB')
 
-    # In press/stamping mode with fast CTs (e.g. 0.4s), multiple shots can land
+    # For fast tools (CT < 2s e.g. press/stamping), multiple shots can land
     # within the same second — apply a small offset to separate them visually.
-    # For injection/normal mode (CTs of several seconds+) this is never needed.
-    if press_mode:
+    # Slow tools (injection etc.) always have multi-second CTs so no collision risk.
+    _is_fast_tool = press_mode or (isinstance(mode_ct, (int, float)) and mode_ct < 2.0)
+    if _is_fast_tool:
         dupes = df.groupby('shot_time').cumcount()
         df['plot_time'] = df['shot_time'] + pd.to_timedelta(dupes * 0.05, unit='s')
     else:
