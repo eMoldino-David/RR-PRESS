@@ -954,27 +954,36 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
     else:
         df['plot_time'] = df['shot_time']
 
+    # Bar width from median inter-shot gap — scales naturally when zooming
+    _gaps = df['shot_time'].diff().dt.total_seconds().dropna()
+    _median_gap_ms = int(_gaps.median() * 1000 * 0.8) if len(_gaps) > 0 else None
+    _bw = {"width": _median_gap_ms} if _median_gap_ms else {}
+
     _stroke_label = "Normal Stroke" if press_mode else "Normal Shot"
-    _stop_label   = "Stopped Stroke" if press_mode else "Stopped Shot"
 
     _hover = (
         "<b>%{x}</b><br>"
-        "<b>Adj. Cycle Time:</b> %{y:.2f}s<br>"
-        "<b>Actual CT:</b> %{customdata:.2f}s"
-        "<extra></extra>"
+        "<b>Adj. Cycle Time:</b> %{y:.2f}s"
+        "<extra>%{marker.color == '#3498DB' and 'Normal Shot' or 'Run Rate Stop'}</extra>"
     )
+    # Simpler: two separate traces with correct extra labels
+    df_normal = df[df['stop_flag'] == 0]
+    df_stop   = df[df['stop_flag'] == 1]
+
+    _hover_normal = "<b>%{x}</b><br><b>Adj. Cycle Time:</b> %{y:.2f}s<extra>Normal Shot</extra>"
+    _hover_stop   = "<b>%{x}</b><br><b>Adj. Cycle Time:</b> %{y:.2f}s<extra>Run Rate Stop</extra>"
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
-        x=df['plot_time'], y=df['_y'],
-        marker_color=df['color'], name=_y_label, showlegend=False,
-        customdata=df['_actual'],
-        hovertemplate=_hover
+        x=df_normal['plot_time'], y=df_normal['_y'],
+        marker_color='#3498DB', name='Normal Shot',
+        hovertemplate=_hover_normal, **_bw
     ))
-    fig.add_trace(go.Bar(x=[None], y=[None], name=_stroke_label,
-                         marker_color='#3498DB', showlegend=True))
-    fig.add_trace(go.Bar(x=[None], y=[None], name=_stop_label,
-                         marker_color=PASTEL_COLORS['red'], showlegend=True))
+    fig.add_trace(go.Bar(
+        x=df_stop['plot_time'], y=df_stop['_y'],
+        marker_color=PASTEL_COLORS['red'], name='Run Rate Stop',
+        hovertemplate=_hover_stop, **_bw
+    ))
     fig.add_trace(go.Scatter(
         x=[None], y=[None], mode='lines', line=dict(width=0),
         fill='tozeroy', fillcolor='rgba(119, 221, 119, 0.3)',
