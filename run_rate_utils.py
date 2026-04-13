@@ -923,14 +923,12 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
     # In press mode convert y values to SPM or SPH (60/CT or 3600/CT)
     if press_mode:
         _conv = lambda v: ct_to_stroke_rate(v, stroke_unit)
-        df['_y'] = _conv(df['actual_ct'].values)
         _lower_y = _conv(upper_limit) if upper_limit else None   # limits invert
         _upper_y = _conv(lower_limit) if lower_limit else None
         _mode_y  = _conv(mode_ct) if isinstance(mode_ct, (int, float)) else None
         _y_label = f"Strokes Per {'Hour' if stroke_unit == 'SPH' else 'Minute'} ({stroke_unit})"
         _title   = f"Run Rate – Stroke Chart ({stroke_unit})"
     else:
-        df['_y'] = df['actual_ct']
         _lower_y, _upper_y = lower_limit, upper_limit
         _mode_y  = mode_ct if isinstance(mode_ct, (int, float)) else None
         _y_label = "Cycle Time (sec)"
@@ -938,9 +936,17 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
 
     df['color'] = np.where(df['stop_flag'] == 1, PASTEL_COLORS['red'], '#3498DB')
 
-    # For fast tools (CT < 2s e.g. press/stamping), multiple shots can land
-    # within the same second — apply a small offset to separate them visually.
-    # Slow tools (injection etc.) always have multi-second CTs so no collision risk.
+    # Bar height = adj_ct_sec (true machine occupation time).
+    # For normal shots adj_ct_sec == actual_ct. For gap stops it reflects the real idle duration.
+    if press_mode:
+        df['_y'] = _conv(df['adj_ct_sec'].values if 'adj_ct_sec' in df.columns else df['actual_ct'].values)
+    else:
+        df['_y'] = df['adj_ct_sec'] if 'adj_ct_sec' in df.columns else df['actual_ct']
+
+    # Tooltip — show both Adj. CT and Actual CT for clarity
+    df['_actual'] = df['actual_ct']
+    df['_adj']    = df['adj_ct_sec'] if 'adj_ct_sec' in df.columns else df['actual_ct']
+
     _is_fast_tool = press_mode or (isinstance(mode_ct, (int, float)) and mode_ct < 2.0)
     if _is_fast_tool:
         dupes = df.groupby('shot_time').cumcount()
@@ -951,15 +957,19 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
     _stroke_label = "Normal Stroke" if press_mode else "Normal Shot"
     _stop_label   = "Stopped Stroke" if press_mode else "Stopped Shot"
 
-    # Fixed width in ms — scales in data space when zooming
-    _bar_w = (int(mode_ct * 800) if isinstance(mode_ct, (int, float)) and mode_ct > 0
-              else None)
+    _hover = (
+        "<b>%{x}</b><br>"
+        "<b>Adj. Cycle Time:</b> %{y:.2f}s<br>"
+        "<b>Actual CT:</b> %{customdata:.2f}s"
+        "<extra></extra>"
+    )
 
     fig = go.Figure()
     fig.add_trace(go.Bar(
         x=df['plot_time'], y=df['_y'],
         marker_color=df['color'], name=_y_label, showlegend=False,
-        **({"width": _bar_w} if _bar_w else {})
+        customdata=df['_actual'],
+        hovertemplate=_hover
     ))
     fig.add_trace(go.Bar(x=[None], y=[None], name=_stroke_label,
                          marker_color='#3498DB', showlegend=True))
@@ -1044,6 +1054,7 @@ def plot_shot_bar_chart(df, lower_limit, upper_limit, mode_ct,
         title=_title, xaxis_title="Date / Time",
         yaxis_title=_y_label, yaxis=dict(range=[0, y_cap]),
         bargap=0.05, xaxis=dict(showgrid=True), showlegend=True,
+        hoverlabel=dict(bgcolor='#1e1e2e', font_size=13, font_family='monospace'),
         legend=dict(title="Legend", orientation="h", yanchor="bottom",
                     y=1.02, xanchor="right", x=1)
     )
