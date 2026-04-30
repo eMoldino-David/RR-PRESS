@@ -1072,13 +1072,16 @@ def render_dashboard(df_tool, tool_id_selection, tolerance, downtime_gap_toleran
                 df_shot_data['Date / Time']
             ).dt.strftime('%Y-%m-%d %H:%M:%S.%f').str[:-3]
 
-        # UI display: format to 2dp consistently
-        _fmt_shot = {c: '{:.2f}' for c in ['Actual CT (sec)', 'Adjusted CT (sec)',
-                                             'Approved CT (sec)', 'Mode CT (sec)',
-                                             'Time Difference (sec)']
-                     if c in df_shot_data.columns}
+        # UI display: format to 2dp consistently via column_config (avoids
+        # Styler / Arrow serialisation issues with Period-dtype source frames)
+        _fmt_cols = ['Actual CT (sec)', 'Adjusted CT (sec)',
+                     'Approved CT (sec)', 'Mode CT (sec)', 'Time Difference (sec)']
+        _col_cfg = {
+            c: st.column_config.NumberColumn(c, format="%.2f")
+            for c in _fmt_cols if c in df_shot_data.columns
+        }
 
-        st.dataframe(df_shot_data.style.format(_fmt_shot, na_rep='—'), use_container_width=True)
+        st.dataframe(df_shot_data, column_config=_col_cfg, use_container_width=True)
 
         # CSV download — full precision, no formatting
         st.download_button(
